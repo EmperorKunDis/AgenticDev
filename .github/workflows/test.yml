@@ -1,0 +1,126 @@
+name: test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # ── Strom repa slibuje cesty; ověř, že existují ────────────────────
+  tree:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: make verify
+        run: make verify
+
+  # ── Shell a Python se musí parsovat ────────────────────────────────
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq shellcheck
+
+      - name: Parse every shell script
+        run: |
+          fail=0
+          while IFS= read -r f; do
+            head -c 100 "$f" | grep -qE '^#!.*(bash|/sh)' || continue
+            bash -n "$f" || { echo "::error file=$f::syntax error"; fail=1; }
+          done < <(find . -path ./.git -prune -o -type f -print)
+          exit $fail
+
+      - name: shellcheck (advisory)
+        continue-on-error: true
+        run: |
+          find . -path ./.git -prune -o -name '*.sh' -print \
+            | xargs -r shellcheck -S warning || true
+
+      - name: Parse Python
+        run: python3 -c "import ast,sys;[ast.parse(open(f).read()) for f in sys.argv[1:]]" control-plane/app/*.py
+
+  # ── Build musí být deterministický ─────────────────────────────────
+  reproducible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Build twice, compare
+        run: |
+          make dist
+          a=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          make clean && make dist
+          b=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          echo "build 1: $a"
+          echo "build 2: $b"
+          if [ "$a" != "$b" ]; then
+            echo "::error::build is not reproducible"
+            exit 1
+          fi
+
+      - name: Artifact self-check
+        run: bash dist/praut-install-vps.sh --check
+
+  # ── Skutečná instalace na čistém systému ───────────────────────────
+  # Tohle je ta úloha, která by chytila chyby jako chybějící INSTALL_LOCK
+  # nebo špatná práva na datech Forgeja. Bez ní se na ně přijde až v provozu.
+  install:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      - name: Build artifact
+        run: make dist
+
+      - name: Compose config must interpolate
+        run: |
+          # Vyrob minimální .env se všemi povinnými proměnnými a nech
+          # docker compose ověřit, že se soubor přeloží. Chybějící proměnná
+          # (jako dřív SMTP_FROM u Caddy) tady spadne.
+          cat > /tmp/test.env <<'ENV'
+          PRAUT_INSTANCE_ID=00000000-0000-0000-0000-000000000000
+          PRAUT_MODE=public
+          PRAUT_DOMAIN=test.example.ts.net
+          VPS_HOST=127.0.0.1
+          TZ=Europe/Prague
+          POSTGRES_PASSWORD=testtesttesttest
+          MINIO_ROOT_PASSWORD=testtesttesttest
+          JWT_SECRET=testtesttesttest
+          WO_SIGNING_KEY_B64=dGVzdA==
+          WO_VERIFY_KEY_B64=dGVzdA==
+          JOIN_TOKEN=testtesttesttest
+          DASHBOARD_TOKEN=testtesttesttest
+          FORGEJO_ADMIN_USER=admin
+          FORGEJO_ADMIN_EMAIL=admin@example.com
+          FORGEJO_ADMIN_PASSWORD=testtesttesttest
+          FORGEJO_SECRET_KEY=testtesttesttest
+          FORGEJO_ROOT_URL=https://test.example.ts.net/git/
+          FORGEJO_TOKEN=
+          SMTP_HOST=
+          SMTP_PORT=587
+          SMTP_USER=
+          SMTP_PASSWORD=
+          SMTP_FROM=platform@example.com
+          MINIO_TAG=RELEASE.2025-04-22T22-12-26Z
+          ENV
+          docker compose -f vps/docker-compose.yml --env-file /tmp/test.env \
+            --profile public config > /dev/null
+          echo "✓ compose se přeloží se všemi profily"
+
+      - name: Caddyfile must parse
+        run: |
+          # Caddyfile se dřív rozbil na `email` bez argumentu. Necháme
+          # samotného Caddyho, ať řekne, jestli je syntakticky v pořádku.
+          docker run --rm \
+            -e PRAUT_DOMAIN=test.example.ts.net \
+            -e SMTP_FROM=platform@example.com \
+            -v "$PWD/vps/Caddyfile:/etc/caddy/Caddyfile:ro" \
+            caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile

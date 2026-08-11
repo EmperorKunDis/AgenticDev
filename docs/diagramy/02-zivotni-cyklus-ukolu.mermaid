@@ -1,0 +1,76 @@
+sequenceDiagram
+    autonumber
+    participant L as launcher<br/>(host vývojáře)
+    participant CP as Control Plane<br/>(VPS)
+    participant R as Registry + MinIO<br/>(VPS)
+    participant H as Harness<br/>(v podu)
+    participant D as Director<br/>(v podu)
+    participant W as Worker<br/>(LLM + nástroje)
+    participant G as Forgejo + Ledger<br/>(VPS)
+
+    rect rgb(240, 246, 250)
+    Note over L,CP: FÁZE 1 — získání práce
+    L->>CP: auth device key (ed25519)
+    CP-->>L: krátkodobý JWT
+    L->>CP: GET /work-orders/next
+    CP->>CP: výběr directora podle<br/>projekt × fáze × druh úkolu
+    CP->>CP: kontrola kompatibility<br/>harness × requires_harness
+    CP-->>L: work order (podepsaný, TTL 4h)<br/>+ lease
+    L->>L: ověření podpisu a expirace
+    end
+
+    rect rgb(255, 246, 238)
+    Note over L,R: FÁZE 2 — materializace prostředí
+    L->>R: pull compose@ref
+    L->>R: pull harness@digest
+    L->>R: pull director@verze
+    L->>L: ověření cosign podpisu directora
+    Note right of L: nepodepsaný director →<br/>STOP + bezpečnostní událost
+    L->>L: docker compose up<br/>(egress proxy jako první)
+    L->>H: start
+    end
+
+    rect rgb(245, 250, 240)
+    Note over H,G: FÁZE 3 — příprava kontextu
+    H->>G: git clone @ base_ref → work_branch
+    H->>R: stažení context bundle
+    H->>H: ověření sha256 každé položky
+    H->>H: spočítání tokenů PŘED odesláním
+    Note right of H: překročení rozpočtu →<br/>TVRDÝ FAIL, žádné ořezání
+    H->>CP: OTLP stream zahájen
+    H->>D: načtení, kontrola requires_harness,<br/>sandbox bez sítě a bez secrets
+    end
+
+    rect rgb(253, 242, 242)
+    Note over D,W: FÁZE 4 — orchestrace (smyčka)
+    loop dokud stavový automat neskončí
+        D->>H: request worker (role, profil)
+        H->>H: kontrola politiky<br/>model allowlist · rozpočet · egress
+        alt politika povoluje
+            H->>W: spuštění
+            W-->>H: výstup + tokeny + náklad
+            H-->>D: výsledek
+        else politika zakazuje
+            H-->>D: odmítnuto (director to nepřepíše)
+        end
+        D->>CP: checkpoint stavu (idempotentně)
+        opt brána nebo vyčerpaná smyčka
+            D->>CP: decision (pending_human)
+            CP-->>D: blokace, notifikace ntfy
+            Note over CP: čeká na člověka<br/>→ materializace jako ADR
+        end
+    end
+    end
+
+    rect rgb(240, 246, 250)
+    Note over H,G: FÁZE 5 — odevzdání
+    H->>H: lokální brány: lint · typecheck · testy
+    D->>G: push work_branch + PR
+    D->>R: upload artefaktů a transkriptů
+    D->>G: zápis agent_run, decisions, nákladů
+    G->>G: CI gate: provenance<br/>(commit má Task-Id a agent_run)
+    H->>CP: uvolnění lease
+    L->>L: teardown compose stacku
+    end
+
+    Note over L,G: Pod je zahozen. Vše podstatné žije na VPS.

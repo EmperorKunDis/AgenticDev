@@ -1,0 +1,284 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════
+#  praut — spouštěč pracovního prostředí
+#
+#  Dvojklik na ikonu → vyber projekt → Claude Code je nastavený.
+#  VPS pošle subagenty, hooky, oprávnění a kontext podle fáze.
+# ═══════════════════════════════════════════════════════════════
+set -euo pipefail
+
+CFG_DIR="${PRAUT_HOME:-$HOME/.praut}"
+CFG="$CFG_DIR/config"
+WORK_ROOT="${PRAUT_WORK_ROOT:-$HOME/Praut}"
+
+B='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; D='\033[2m'; O='\033[0m'
+c()    { printf "${B}▸ %s${O}\n" "$*"; }
+ok()   { printf "${G}✓ %s${O}\n" "$*"; }
+warn() { printf "${Y}! %s${O}\n" "$*"; }
+die()  { printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
+
+login() {
+  . "$CFG" 2>/dev/null || die "Tenhle Mac není připojený. Pusť install-mac.sh."
+  local r
+  r=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device" \
+        -H 'content-type: application/json' \
+        -d "$(jq -nc --arg h "$HOSTNAME_" --arg f "$DEVICE_KEY_FP" \
+              '{hostname:$h, device_key_fp:$f}')") \
+    || die "Přihlášení selhalo. Jsi na tailnetu? Zkus: tailscale status"
+  echo "$r" | jq -r .token > "$CFG_DIR/token"
+  chmod 600 "$CFG_DIR/token"
+}
+
+get_token() {
+  [[ -f "$CFG_DIR/token" ]] || login
+  local t; t=$(cat "$CFG_DIR/token")
+  if ! curl -fsS -o /dev/null "$CONTROL_PLANE/v1/workspace/projects" \
+        -H "Authorization: Bearer $t" 2>/dev/null; then
+    login; t=$(cat "$CFG_DIR/token")
+  fi
+  printf '%s' "$t"
+}
+
+cmd_work() {
+  . "$CFG" 2>/dev/null || die "Tenhle Mac není připojený. Pusť install-mac.sh."
+
+  # --phase <fáze> = pracuj v jiné fázi, aniž bys ji přepínal celému týmu
+  local override=""
+  local args=(); while [[ $# -gt 0 ]]; do
+    case "$1" in
+      --phase|-f) override="$2"; shift 2 ;;
+      *) args+=("$1"); shift ;;
+    esac
+  done
+  set -- "${args[@]+"${args[@]}"}"
+  local t; t=$(get_token)
+
+  local resp n
+  resp=$(curl -fsS "$CONTROL_PLANE/v1/workspace/projects" -H "Authorization: Bearer $t")
+  n=$(echo "$resp" | jq '.projects | length')
+  if [[ "$n" -eq 0 ]]; then
+    warn "Zatím žádný projekt."
+    echo "  Založ ho v nástěnce: $CONTROL_PLANE"
+    read -rp "  Enter zavře okno." _; exit 0
+  fi
+
+  local code="${1:-}"
+  if [[ -z "$code" ]]; then
+    if command -v fzf >/dev/null; then
+      code=$(echo "$resp" | jq -r '.projects[] |
+              "\(.code)\t\(.client_name // "")\t\(.phase // "-")\t\(.ready_tasks) úkolů"' \
+            | column -t -s$'\t' \
+            | fzf --height=40% --reverse --border=rounded --prompt='projekt › ' \
+                  --header=$'\n  Šipky vybírají, psaním filtruješ, Enter potvrdí\n' \
+                  --color='border:8,header:8,prompt:6,pointer:2,hl:2,hl+:2' \
+            | awk '{print $1}')
+      [[ -n "$code" ]] || { echo "  zrušeno"; exit 0; }
+    else
+      echo
+      printf "  ${B}Na čem chceš dělat?${O}\n\n"
+      echo "$resp" | jq -r '.projects | to_entries[] |
+        "\(.key+1)|\(.value.code)|\(.value.client_name // "")|\(.value.phase // "-")|\(.value.ready_tasks)"' \
+        | while IFS='|' read -r i cd cl ph rt; do
+            printf "  %s)  %-18s ${D}%-22s${O} %-15s ${D}%s úkolů${O}\n" "$i" "$cd" "$cl" "$ph" "$rt"
+          done
+      echo
+      local pick; read -rp "  číslo (Enter = 1): " pick </dev/tty
+      pick=${pick:-1}
+      code=$(echo "$resp" | jq -r ".projects[$((pick-1))].code // empty")
+      [[ -n "$code" ]] || die "Neplatná volba."
+    fi
+  fi
+
+  echo; c "Stahuji nastavení pro $code"
+  local b
+  b=$(curl -fsS "$CONTROL_PLANE/v1/workspace/$code/bundle${override:+?phase=$override}" \
+        -H "Authorization: Bearer $t") || die "Projekt '$code' se nepodařilo načíst."
+
+  local repo phase client dclass tasks ws
+  repo=$(echo "$b"   | jq -r .project.repo_url)
+  phase=$(echo "$b"  | jq -r .project.phase)
+  client=$(echo "$b" | jq -r '.project.client // ""')
+  dclass=$(echo "$b" | jq -r .project.data_class)
+  tasks=$(echo "$b"  | jq -r .ready_tasks)
+  ws="$WORK_ROOT/$code"
+
+  mkdir -p "$WORK_ROOT"
+  if [[ -d "$ws/.git" ]]; then
+    c "Aktualizuji repozitář"
+    git -C "$ws" fetch --quiet --all 2>/dev/null || warn "fetch se nepovedl, pokračuji"
+  else
+    c "Klonuji $repo"
+    git clone --quiet "$repo" "$ws" 2>/dev/null || { mkdir -p "$ws"; git -C "$ws" init -q; }
+  fi
+
+  # Git po síti dělá hostitel, ne pod. Agent tak nikdy nedrží přihlašovací
+  # údaje k repozitáři — commituje lokálně, push proběhne po skončení.
+  local branch="praut/$(date +%Y%m%d-%H%M%S)"
+  git -C "$ws" checkout -q -B "$branch" 2>/dev/null || true
+
+  c "Nastavuji pracovní prostředí"
+  echo "$b" | jq -r '.files | to_entries[] | @base64' | while read -r row; do
+    dec=$(echo "$row" | base64 --decode)
+    path=$(echo "$dec" | jq -r .key)
+    mkdir -p "$ws/$(dirname "$path")"
+    echo "$dec" | jq -r .value > "$ws/$path"
+  done
+  chmod +x "$ws"/bin/* 2>/dev/null || true
+
+  mkdir -p "$ws/.praut/bin"
+  cat > "$ws/.praut/bin/praut-decision" <<DEC
+#!/usr/bin/env bash
+curl -fsS -X POST "$CONTROL_PLANE/v1/workspace/$code/decision" \\
+  -H "Authorization: Bearer \$(cat /run/praut/token 2>/dev/null)" \\
+  -H 'content-type: application/json' \\
+  -d "\$(jq -nc --arg q "\$1" --arg ch "\$2" --arg r "\$3" \\
+        '{question:\$q, chosen:\$ch, rationale:\$r}')" >/dev/null \\
+  && echo "✓ zapsáno na VPS" || echo "✗ zápis selhal"
+DEC
+  chmod +x "$ws/.praut/bin/praut-decision"
+  grep -q '^\.praut/$' "$ws/.gitignore" 2>/dev/null || echo '.praut/' >> "$ws/.gitignore"
+
+  # ── Sandbox ────────────────────────────────────────────────────
+  if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
+    die "Docker neběží. Bez něj by agent běžel přímo na tvém stroji bez izolace,
+   a to tenhle launcher neudělá. Spusť Docker a zkus to znovu."
+  fi
+
+  local pod_dir="$CFG_DIR/pod"
+  if [[ ! -f "$pod_dir/compose.yaml" ]]; then
+    c "Stahuji definici podu"
+    mkdir -p "$pod_dir/egress" "$pod_dir/harness"
+    for f in compose.yaml Dockerfile egress/Dockerfile egress/entrypoint.sh harness/harness.py; do
+      curl -fsSL "$CONTROL_PLANE/pod/$f" -o "$pod_dir/$f" \
+        || die "Nepodařilo se stáhnout pod/$f z VPS."
+    done
+  fi
+
+  # Kontext a tajemství mimo repozitář — do gitu se nesmí dostat.
+  local ctx="$CFG_DIR/ctx/$code"
+  mkdir -p "$ctx"; chmod 700 "$CFG_DIR/ctx"
+
+  # Scope na zapisovatelné mounty. Repozitář jde dovnitř read-only,
+  # tyhle cesty se přes něj přemountují rw. Co není tady, je pro agenta
+  # jen ke čtení — a vynucuje to jádro.
+  local ovr="$pod_dir/compose.override.yaml"
+  {
+    echo "services:"
+    echo "  pod:"
+    echo "    volumes:"
+    echo "      - $ws/.git:/workspace/.git:rw"
+    echo "      - $ws/.praut:/workspace/.praut:rw"
+    echo "$b" | jq -r '.scope[]?' | while read -r sc; do
+      [[ -n "$sc" ]] || continue
+      local top="${sc%%/*}"
+      [[ -n "$top" && "$top" != "." ]] || continue
+      mkdir -p "$ws/$top"
+      echo "      - $ws/$top:/workspace/$top:rw"
+    done
+  } > "$ovr"
+
+  # Policy pro harness. Egress vždy obsahuje control plane — bez něj by
+  # pod nemohl zapisovat rozhodnutí.
+  local cp_host; cp_host=$(sed -E 's|^https?://||; s|[:/].*$||' <<<"$CONTROL_PLANE")
+  local allow; allow=$(echo "$b" | jq -r '.egress_allowlist // [] | join(",")')
+  [[ -n "$allow" ]] && allow="$cp_host,$allow" || allow="$cp_host"
+
+  local lease_h; lease_h=$(echo "$b" | jq -r '.lease_hours // 4')
+  echo "$b" | jq \
+      --arg cp "$CONTROL_PLANE" --arg br "$branch" \
+      --argjson dl "$(( $(date +%s) + lease_h * 3600 ))" \
+      '{project: .project.code, client: .project.client, phase: .project.phase,
+        data_class: .project.data_class, model_allowlist: .project.model_allowlist,
+        model: (.project.model // ""), scope: .scope,
+        egress: (.egress_allowlist // []), budget_tokens: (.budget_tokens // null),
+        control_plane: $cp, branch: $br, deadline_ts: $dl}' > "$ctx/policy.json"
+
+  cat > "$pod_dir/.env" <<ENVF
+PRAUT_PROJECT=$code
+PRAUT_REPO_DIR=$ws
+PRAUT_CTX_DIR=$ctx
+PRAUT_EGRESS_ALLOW=$allow
+PRAUT_UID=$(id -u)
+PRAUT_GID=$(id -g)
+ENVF
+  chmod 600 "$pod_dir/.env"
+
+  clear
+  printf "\n  ${G}▍${O} ${B}%s${O}  ${D}%s${O}\n" "$code" "$client"
+  printf "  ${D}%s${O}\n" "──────────────────────────────────────────"
+  printf "  fáze          ${B}%s${O}\n" "$phase"
+  printf "  data          %s\n" "$dclass"
+  printf "  smíš měnit    %s\n" "$(echo "$b" | jq -r '.scope | join(", ")')"
+  printf "  úkoly         %s ready ${D}(.praut/tasks.md)${O}\n" "$tasks"
+  printf "  větev         %s\n" "$branch"
+  printf "  ${D}──────────────────────────────────────────${O}\n\n"
+
+  c "Startuji pod"
+  ( cd "$pod_dir" && docker compose up -d --build egress >/dev/null 2>&1 ) \
+    || die "Egress proxy nenaběhla. Pod bez ní nespustím."
+  ok "egress"
+
+  # Token a policy až teď, na tmpfs uvnitř podu — na disk hostitele se
+  # nedostanou.
+  ( cd "$pod_dir" && docker compose up -d --no-deps pod >/dev/null 2>&1 ) \
+    || die "Pod nenaběhl."
+  local cid; cid=$( cd "$pod_dir" && docker compose ps -q pod )
+  docker cp "$ctx/policy.json" "$cid:/run/praut/policy.json" >/dev/null
+  docker cp "$CFG_DIR/token"   "$cid:/run/praut/token"       >/dev/null 2>&1 || true
+
+  docker exec -it "$cid" python3 /opt/praut/harness.py || true
+
+  # ── Úklid ──────────────────────────────────────────────────────
+  c "Uklízím"
+  ( cd "$pod_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1 ) || true
+  rm -f "$ctx/policy.json"
+  ok "pod zrušen"
+
+  if [[ -n "$(git -C "$ws" status --porcelain 2>/dev/null)" ]]; then
+    warn "Ve workspace zůstaly nezacommitované změny."
+  fi
+  if git -C "$ws" rev-parse --verify -q "$branch" >/dev/null 2>&1; then
+    if git -C "$ws" log --oneline "origin/$branch..$branch" 2>/dev/null | grep -q .; then
+      c "Odesílám větev $branch"
+      git -C "$ws" push -q -u origin "$branch" 2>/dev/null \
+        && ok "odesláno" || warn "push se nepovedl — zkus ručně: git -C $ws push -u origin $branch"
+    fi
+  fi
+}
+
+cmd_doctor() {
+  local bad=0
+  for t in git jq curl; do
+    command -v $t >/dev/null && ok "$t" || { warn "chybí: $t"; bad=1; }
+  done
+  command -v pi >/dev/null && ok "pi" \
+    || { warn "chybí Pi → npm install -g @earendil-works/pi-coding-agent"; bad=1; }
+  command -v tailscale >/dev/null && ok "tailscale" || warn "tailscale"
+  if [[ -f "$CFG" ]]; then
+    ok "konfigurace"
+    . "$CFG"
+    curl -fsS --max-time 5 "$CONTROL_PLANE/v1/health" >/dev/null 2>&1 \
+      && ok "spojení s VPS" || { warn "VPS nedostupný: $CONTROL_PLANE"; bad=1; }
+  else
+    warn "nepřipojeno — pusť install-mac.sh"; bad=1
+  fi
+  [[ $bad -eq 0 ]] && ok "Všechno v pořádku." || die "Oprav výše uvedené."
+}
+
+case "${1:-work}" in
+  work)   shift 2>/dev/null || true; cmd_work "$@" ;;
+  doctor) cmd_doctor ;;
+  board)  . "$CFG"; open "$CONTROL_PLANE" 2>/dev/null || echo "$CONTROL_PLANE" ;;
+  login)  login && ok "přihlášeno" ;;
+  *) cat <<'HELP'
+praut — pracovní prostředí Praut
+
+  praut work [projekt]   vyber projekt a začni pracovat
+  praut work X --phase delivery
+                         pracuj v jiné fázi, ostatním se nic nemění
+  praut doctor           zkontroluje prostředí
+  praut board            otevře nástěnku
+  praut login            obnoví přihlášení
+HELP
+  ;;
+esac

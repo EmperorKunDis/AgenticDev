@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Spouštěč. Otevře Ghostty (nebo náhradu) a spustí v něm praut work.
+set -euo pipefail
+
+PRAUT=""
+for c in /usr/local/bin/praut "$HOME/bin/praut" /opt/homebrew/bin/praut; do
+  [[ -x "$c" ]] && { PRAUT="$c"; break; }
+done
+if [[ -z "$PRAUT" ]]; then
+  osascript -e 'display alert "Praut není nainstalovaný" message "Pusť instalační příkaz, který ti poslal správce." as critical'
+  exit 1
+fi
+
+CMD="$PRAUT work"
+
+if [[ -d /Applications/Ghostty.app ]]; then
+  open -na Ghostty --args --class=cz.praut --title="Praut" -e "$CMD"
+elif [[ -d /Applications/iTerm.app ]]; then
+  osascript -e "tell application \"iTerm\" to create window with default profile command \"$CMD\"" >/dev/null
+else
+  T=$(mktemp -t praut).command
+  printf '#!/bin/bash\nclear\nexec %s\n' "$CMD" > "$T"
+  chmod +x "$T"
+  open -a Terminal "$T"
+fi

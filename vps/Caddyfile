@@ -1,0 +1,35 @@
+# Jediný veřejně dostupný vstup. Vše ostatní jen přes tailnet.
+{
+	email {$SMTP_FROM}
+}
+
+{$PRAUT_DOMAIN} {
+	# Tailnet doména nemá veřejný DNS záznam — Let's Encrypt ji nikdy
+	# neověří. Certifikát vydá sám Tailscale přes tailscaled.sock.
+	tls {
+		get_certificate tailscale
+	}
+
+	encode zstd gzip
+
+	# Control plane API — pro pody na tailnetu
+	handle /v1/* {
+		reverse_proxy control-plane:8080
+	}
+
+	# Forgejo — git, PR, Actions, webhooky
+	handle /git/* {
+		uri strip_prefix /git
+		reverse_proxy forgejo:3000
+	}
+
+	# Nástěnka a instalační skripty
+	handle {
+		reverse_proxy control-plane:8080
+	}
+
+	log {
+		output file /data/access.log
+		format json
+	}
+}

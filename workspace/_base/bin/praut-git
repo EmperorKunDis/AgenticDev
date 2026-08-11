@@ -1,0 +1,347 @@
+#!/usr/bin/env bash
+# ═══════════════════════════════════════════════════════════════
+#  praut-git — git automatizace
+#
+#  Deterministický nástroj. Žádný model, žádné tokeny.
+#  Agent i člověk volají to samé.
+#
+#  Návrh stojí na třech věcech:
+#    1) worktree na úkol → paralelní práce bez stashování
+#    2) checkpointy → bisect je pak k něčemu, rewind taky
+#    3) git notes → u každého commitu je vidět, ze které session vznikl
+# ═══════════════════════════════════════════════════════════════
+set -euo pipefail
+
+G='\033[1;32m'; B='\033[1;36m'; Y='\033[1;33m'; R='\033[1;31m'; D='\033[2m'; O='\033[0m'
+# Hlášky vždy na stderr. Na stdout jde jen to, co má číst skript.
+ok()   { printf "${G}✓${O} %s\n" "$*" >&2; }
+info() { printf "${B}▸${O} %s\n" "$*" >&2; }
+warn() { printf "${Y}!${O} %s\n" "$*" >&2; }
+die()  { printf "${R}✗${O} %s\n" "$*" >&2; exit 1; }
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die "Nejsi v git repozitáři."
+COMMON=$(git rev-parse --git-common-dir)
+MAIN_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)
+TREES="$(dirname "$ROOT")/.praut-trees"
+SESSION="${PI_SESSION_ID:-${PRAUT_SESSION:-manual}}"
+NOTES_REF="refs/notes/praut"
+
+# Přepis diakritiky. Po jednotlivých znacích — třídy znaků rozbíjejí UTF-8.
+slug() {
+  printf '%s' "$1" | sed \
+    -e 's/á/a/g' \
+    -e 's/à/a/g' \
+    -e 's/â/a/g' \
+    -e 's/ä/a/g' \
+    -e 's/ã/a/g' \
+    -e 's/č/c/g' \
+    -e 's/ç/c/g' \
+    -e 's/ď/d/g' \
+    -e 's/é/e/g' \
+    -e 's/ě/e/g' \
+    -e 's/è/e/g' \
+    -e 's/ê/e/g' \
+    -e 's/ë/e/g' \
+    -e 's/í/i/g' \
+    -e 's/ì/i/g' \
+    -e 's/î/i/g' \
+    -e 's/ï/i/g' \
+    -e 's/ľ/l/g' \
+    -e 's/ĺ/l/g' \
+    -e 's/ň/n/g' \
+    -e 's/ñ/n/g' \
+    -e 's/ó/o/g' \
+    -e 's/ò/o/g' \
+    -e 's/ô/o/g' \
+    -e 's/ö/o/g' \
+    -e 's/õ/o/g' \
+    -e 's/ř/r/g' \
+    -e 's/ŕ/r/g' \
+    -e 's/š/s/g' \
+    -e 's/ś/s/g' \
+    -e 's/ť/t/g' \
+    -e 's/ú/u/g' \
+    -e 's/ů/u/g' \
+    -e 's/ù/u/g' \
+    -e 's/û/u/g' \
+    -e 's/ü/u/g' \
+    -e 's/ý/y/g' \
+    -e 's/ž/z/g' \
+    -e 's/ź/z/g' \
+    -e 's/Á/a/g' \
+    -e 's/Č/c/g' \
+    -e 's/Ď/d/g' \
+    -e 's/É/e/g' \
+    -e 's/Ě/e/g' \
+    -e 's/Í/i/g' \
+    -e 's/Ň/n/g' \
+    -e 's/Ó/o/g' \
+    -e 's/Ř/r/g' \
+    -e 's/Š/s/g' \
+    -e 's/Ť/t/g' \
+    -e 's/Ú/u/g' \
+    -e 's/Ů/u/g' \
+    -e 's/Ý/y/g' \
+    -e 's/Ž/z/g' \
+    | tr '[:upper:]' '[:lower:]' \
+    | sed 's/[^a-z0-9]\{1,\}/-/g; s/^-*//; s/-*$//' \
+    | cut -c1-40
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  start — nový úkol = nový worktree + větev
+# ═══════════════════════════════════════════════════════════════
+cmd_start() {
+  local desc="${1:?použití: praut-git start \"popis úkolu\" [task-id]}"
+  local tid="${2:-}"
+  local s; s=$(slug "$desc")
+  local branch="task/${tid:+$tid-}$s"
+  local wt="$TREES/$s"
+
+  # Celé tělo píše na stderr. Na stdout jde jedině cesta k worktree,
+  # aby fungovalo:  cd "$(praut-git start "...")"
+  {
+    git fetch --quiet origin 2>/dev/null || warn "fetch selhal, jedu z lokálního stavu"
+
+    if git show-ref --quiet "refs/heads/$branch"; then
+      info "větev $branch už existuje"
+    else
+      git branch "$branch" "origin/$MAIN_BRANCH" 2>/dev/null \
+        || git branch "$branch" "$MAIN_BRANCH"
+    fi
+
+    if [[ -d "$wt" ]]; then
+      info "worktree už existuje"
+    else
+      mkdir -p "$TREES"
+      git worktree add --quiet "$wt" "$branch"
+    fi
+
+    mkdir -p "$wt/.praut"
+    python3 - "$tid" "$desc" "$branch" "$MAIN_BRANCH" "$SESSION" > "$wt/.praut/task.json" <<'PYJSON'
+import json, sys, datetime
+tid, title, branch, base, session = sys.argv[1:6]
+json.dump({"task_id": tid, "title": title, "branch": branch, "base": base,
+           "started_at": datetime.datetime.now(datetime.timezone.utc)
+                          .strftime("%Y-%m-%dT%H:%M:%SZ"),
+           "session": session},
+          sys.stdout, ensure_ascii=False, indent=2)
+PYJSON
+
+    ok "úkol připraven"
+    printf "  větev     %s\n  worktree  %s\n\n" "$branch" "$wt"
+  } >&2
+
+  echo "$wt"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  checkpoint — průběžný bod návratu
+# ═══════════════════════════════════════════════════════════════
+cmd_checkpoint() {
+  local msg="${1:-průběžný stav}"
+  [[ "$(git branch --show-current)" != "$MAIN_BRANCH" ]] \
+    || die "Jsi na $MAIN_BRANCH. Nejdřív: praut-git start \"popis\""
+  git add -A
+  git diff --cached --quiet && { info "nic nového"; return 0; }
+
+  local n; n=$(git log --oneline --grep='^wip(' 2>/dev/null | wc -l | tr -d ' ')
+  git commit --quiet -m "wip($((n+1))): $msg" -m "Session: $SESSION"
+  git notes --ref="$NOTES_REF" add -f -m "{\"session\":\"$SESSION\",\"kind\":\"checkpoint\",\"ts\":\"$(date -u +%FT%TZ)\"}" HEAD
+  ok "checkpoint #$((n+1)) — $msg"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  save — pořádný commit podle Conventional Commits
+# ═══════════════════════════════════════════════════════════════
+cmd_save() {
+  local type="${1:?použití: praut-git save <feat|fix|refactor|test|docs|chore> <scope> \"zpráva\"}"
+  local scope="${2:?chybí scope}"
+  local msg="${3:?chybí zpráva}"
+  case "$type" in
+    feat|fix|refactor|test|docs|chore|perf|build|ci) ;;
+    *) die "neznámý typ '$type'" ;;
+  esac
+
+  [[ "$(git branch --show-current)" != "$MAIN_BRANCH" ]] \
+    || die "Jsi na $MAIN_BRANCH. Nejdřív: praut-git start \"popis\""
+  git add -A
+  git diff --cached --quiet && { info "nic k uložení"; return 0; }
+
+  local tid=""
+  [[ -f .praut/task.json ]] && tid=$(python3 -c 'import json;print(json.load(open(".praut/task.json")).get("task_id",""))' 2>/dev/null || true)
+
+  git commit --quiet -m "$type($scope): $msg" \
+    -m "${tid:+Task-Id: $tid}" -m "Session: $SESSION"
+  git notes --ref="$NOTES_REF" add -f \
+    -m "{\"session\":\"$SESSION\",\"kind\":\"$type\",\"ts\":\"$(date -u +%FT%TZ)\"}" HEAD
+  ok "$type($scope): $msg"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  sync — narovnání na main
+# ═══════════════════════════════════════════════════════════════
+cmd_sync() {
+  git fetch --quiet origin || die "fetch selhal"
+  local behind; behind=$(git rev-list --count "HEAD..origin/$MAIN_BRANCH" 2>/dev/null || echo 0)
+  [[ "$behind" -eq 0 ]] && { ok "jsi aktuální"; return 0; }
+
+  info "$behind commitů pozadu, rebasuju"
+  if ! git rebase --quiet "origin/$MAIN_BRANCH"; then
+    warn "konflikt při rebase"
+    git --no-pager diff --name-only --diff-filter=U | sed 's/^/    /'
+    echo
+    echo "  Vyřeš, pak: git rebase --continue"
+    echo "  Nebo zruš:  git rebase --abort"
+    return 1
+  fi
+  ok "narovnáno na $MAIN_BRANCH"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  finish — sesypat wip, narovnat, poslat, otevřít PR
+# ═══════════════════════════════════════════════════════════════
+cmd_finish() {
+  local title="${1:-}"
+  local branch; branch=$(git branch --show-current)
+  [[ "$branch" != "$MAIN_BRANCH" ]] || die "Jsi na $MAIN_BRANCH. Nic neodesílám."
+
+  git diff --quiet && git diff --cached --quiet || {
+    warn "máš nezacommitované změny"; cmd_checkpoint "před odevzdáním"; }
+
+  # wip commity sesypat do jednoho
+  local wips; wips=$(git log --oneline "origin/$MAIN_BRANCH..HEAD" --grep='^wip(' | wc -l | tr -d ' ')
+  if [[ "$wips" -gt 0 ]]; then
+    info "sesypávám $wips checkpointů"
+    local base; base=$(git merge-base HEAD "origin/$MAIN_BRANCH")
+    # grep nemusí nic najít (všechno jsou wip) — bez || true by pipefail shodil skript
+    local msg; msg=$(git log --format='%s' "$base..HEAD" | grep -v '^wip(' | head -1 || true)
+    [[ -n "$title" ]] && msg="$title"
+    [[ -n "$msg" ]] || msg="feat: $(basename "$branch" | sed 's|^task/[^-]*-||; s/-/ /g')"
+    git reset --soft "$base"
+    git commit --quiet -m "$msg" -m "Session: $SESSION"
+    # note se sesypáním ztratí, znovu ji připnout na nový commit
+    git notes --ref="$NOTES_REF" add -f \
+      -m "{\"session\":\"$SESSION\",\"kind\":\"squashed\",\"checkpoints\":$wips,\"ts\":\"$(date -u +%FT%TZ)\"}" HEAD
+  fi
+
+  cmd_sync || die "Vyřeš konflikty a spusť finish znovu."
+
+  info "odesílám"
+  git push --quiet -u origin "$branch" --force-with-lease || die "push selhal"
+  ok "větev odeslána: $branch"
+  git push --quiet origin "$NOTES_REF" 2>/dev/null || true
+
+  # PR přes Forgejo API
+  if [[ -n "${PRAUT_FORGEJO_URL:-}" && -n "${PRAUT_FORGEJO_TOKEN:-}" && -n "${PRAUT_REPO:-}" ]]; then
+    local body; body="Session: \`$SESSION\`
+
+$(git log --format='- %s' "origin/$MAIN_BRANCH..HEAD")"
+    local r; r=$(curl -fsS -X POST \
+      "$PRAUT_FORGEJO_URL/api/v1/repos/$PRAUT_REPO/pulls" \
+      -H "Authorization: token $PRAUT_FORGEJO_TOKEN" \
+      -H 'content-type: application/json' \
+      -d "$(python3 -c "
+import json,sys
+print(json.dumps({'head':'$branch','base':'$MAIN_BRANCH',
+                  'title':'''${title:-$branch}''','body':sys.stdin.read()}))" <<<"$body")" 2>/dev/null) \
+      && ok "PR: $(echo "$r" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("html_url",""))' 2>/dev/null)" \
+      || warn "PR se nepodařilo založit (možná už existuje)"
+  else
+    ok "odesláno — PR otevři ručně"
+  fi
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  park / switch / list — přepínání mezi úkoly
+# ═══════════════════════════════════════════════════════════════
+cmd_park()  { cmd_checkpoint "odloženo"; ok "odloženo, můžeš přepnout jinam"; }
+
+cmd_list() {
+  printf "\n  ${B}Rozdělané úkoly${O}\n\n"
+  local here; here=$(git rev-parse --show-toplevel)
+  git worktree list --porcelain | awk '/^worktree /{w=$2} /^branch /{print w"\t"$2}' | \
+  while IFS=$'\t' read -r w b; do
+    b=${b#refs/heads/}
+    [[ "$b" == "$MAIN_BRANCH" ]] && continue
+    n=$(git -C "$w" log --oneline "origin/$MAIN_BRANCH..HEAD" 2>/dev/null | wc -l | tr -d ' ')
+    dirty=""; git -C "$w" diff --quiet 2>/dev/null || dirty=" ${Y}*neuloženo${O}"
+    mark="  "; [[ "$w" == "$here" ]] && mark="${G}→ ${O}"
+    printf "  %b%-32s ${D}%s commitů${O}%b\n" "$mark" "$b" "$n" "$dirty"
+  done
+  echo
+}
+
+cmd_switch() {
+  local q="${1:?použití: praut-git switch <část-názvu>}"
+  local w; w=$(git worktree list --porcelain | awk '/^worktree /{print $2}' | grep -i "$q" | head -1)
+  [[ -n "$w" ]] || die "worktree '$q' nenalezen (praut-git list)"
+  echo "$w"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  who — kdo napsal tenhle řádek a v jaké session
+# ═══════════════════════════════════════════════════════════════
+cmd_who() {
+  local f="${1:?použití: praut-git who <soubor> [řádek]}"
+  local ln="${2:-}"
+  local sha
+  if [[ -n "$ln" ]]; then
+    sha=$(git blame -L "$ln,$ln" --porcelain -- "$f" | head -1 | cut -d' ' -f1)
+  else
+    sha=$(git log -1 --format=%H -- "$f")
+  fi
+  printf "\n  commit   %s\n" "${sha:0:12}"
+  printf "  zpráva   %s\n" "$(git log -1 --format=%s "$sha")"
+  printf "  autor    %s\n" "$(git log -1 --format='%an <%ae>' "$sha")"
+  printf "  session  %s\n\n" \
+    "$(git notes --ref="$NOTES_REF" show "$sha" 2>/dev/null | python3 -c 'import json,sys;print(json.load(sys.stdin).get("session","-"))' 2>/dev/null || echo '-')"
+}
+
+# ═══════════════════════════════════════════════════════════════
+#  cleanup — uklidit dokončené
+# ═══════════════════════════════════════════════════════════════
+cmd_cleanup() {
+  git fetch --quiet --prune origin
+  git worktree list --porcelain | awk '/^worktree /{w=$2} /^branch /{print w"\t"$2}' | \
+  while IFS=$'\t' read -r w b; do
+    b=${b#refs/heads/}
+    [[ "$b" == "$MAIN_BRANCH" ]] && continue
+    if git merge-base --is-ancestor "$b" "origin/$MAIN_BRANCH" 2>/dev/null; then
+      info "smergováno: $b"
+      git worktree remove --force "$w" 2>/dev/null || true
+      git branch -D "$b" 2>/dev/null || true
+    fi
+  done
+  git worktree prune
+  ok "uklizeno"
+}
+
+case "${1:-help}" in
+  start)      shift; cmd_start "$@" ;;
+  checkpoint|cp) shift; cmd_checkpoint "$@" ;;
+  save)       shift; cmd_save "$@" ;;
+  sync)       cmd_sync ;;
+  finish)     shift; cmd_finish "$@" ;;
+  park)       cmd_park ;;
+  list|ls)    cmd_list ;;
+  switch)     shift; cmd_switch "$@" ;;
+  who)        shift; cmd_who "$@" ;;
+  cleanup)    cmd_cleanup ;;
+  *) cat <<'HELP'
+praut-git — git automatizace
+
+  start "popis" [id]   nový worktree + větev z main
+  checkpoint [zpráva]  průběžný bod návratu (wip commit)
+  save <typ> <scope> "zpráva"
+                       pořádný commit (feat|fix|refactor|test|docs|chore)
+  sync                 rebase na aktuální main
+  finish ["titulek"]   sesype wip, narovná, pushne, otevře PR
+  park                 odloží rozdělanou práci
+  list                 rozdělané úkoly
+  switch <část>        cesta k worktree
+  who <soubor> [řádek] kdo a v jaké session to napsal
+  cleanup              smaže smergované větve a worktrees
+HELP
+  ;;
+esac

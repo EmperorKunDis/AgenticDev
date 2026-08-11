@@ -1,0 +1,91 @@
+# ═══════════════════════════════════════════════════════════════
+#  Pod — pracovní prostředí na stroji vývojáře
+#
+#  Generuje se launcherem, proměnné dosazuje `docker compose` z .env
+#  vedle tohohle souboru. Ručně se nespouští.
+#
+#  Dvě věci, na kterých stojí izolace:
+#
+#  1. SÍŤ. Pod je na síti s internal: true — nemá routu ven. Jediná
+#     cesta vede přes egress, který je na obou sítích a pouští jen
+#     domény z allowlistu.
+#
+#  2. SCOPE. Repozitář se připojí read-only a povolené cesty se přes
+#     něj přemountují zapisovatelně (PRAUT_RW_MOUNTS). Zápis mimo
+#     scope tak selže na EROFS — vynucuje to jádro, ne slušnost agenta.
+# ═══════════════════════════════════════════════════════════════
+name: praut-${PRAUT_PROJECT}
+
+networks:
+  # Žádná cesta ven. Kontejner na téhle síti se dostane jen na ostatní
+  # kontejnery ve stejné síti.
+  isolated:
+    internal: true
+  outside:
+    driver: bridge
+
+services:
+  # ─── Egress ───────────────────────────────────────────────────
+  # Nabíhá první a pod na něj čeká. Kdyby se pořadí obrátilo, měl by
+  # agent chvíli síť bez filtru.
+  egress:
+    build:
+      context: ./egress
+    image: praut/egress:${PRAUT_VERSION:-dev}
+    networks: [isolated, outside]
+    environment:
+      PRAUT_EGRESS_ALLOW: ${PRAUT_EGRESS_ALLOW}
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    healthcheck:
+      test: ["CMD-SHELL", "netstat -ltn | grep -q ':8888'"]
+      interval: 2s
+      timeout: 2s
+      retries: 15
+      start_period: 2s
+    restart: "no"
+
+  # ─── Pod ──────────────────────────────────────────────────────
+  pod:
+    build:
+      context: .
+    image: praut/pod:${PRAUT_VERSION:-dev}
+    depends_on:
+      egress: { condition: service_healthy }
+    networks: [isolated]
+
+    # Uid hostitele, aby soubory ve workspace patřily člověku a ne rootovi.
+    user: "${PRAUT_UID}:${PRAUT_GID}"
+
+    environment:
+      HTTP_PROXY:  http://egress:8888
+      HTTPS_PROXY: http://egress:8888
+      http_proxy:  http://egress:8888
+      https_proxy: http://egress:8888
+      # Bez tohohle by npm a spol. proxy obcházely pro lokální adresy.
+      NO_PROXY: localhost,127.0.0.1
+      TERM: ${TERM:-xterm-256color}
+
+    volumes:
+      # Repozitář read-only. Zapisovatelné cesty dopisuje launcher
+      # do compose.override.yaml podle scope.
+      - ${PRAUT_REPO_DIR}:/workspace:ro
+      # Kontext z VPS. Read-only i kdyby si ho agent chtěl přepsat.
+      - ${PRAUT_CTX_DIR}:/ctx:ro
+
+    # Tajemství na tmpfs — po zastavení podu nezůstanou na disku.
+    tmpfs:
+      - /run/praut:mode=0700,uid=${PRAUT_UID},gid=${PRAUT_GID}
+      - /tmp:mode=1777
+
+    security_opt: ["no-new-privileges:true"]
+    cap_drop: [ALL]
+    # Docker socket tu záměrně není. S ním by pod mohl nastartovat
+    # privilegovaný kontejner a izolace by byla na nic.
+
+    stdin_open: true
+    tty: true
+    working_dir: /workspace
+    restart: "no"

@@ -1,0 +1,126 @@
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Tag to release (e.g. v0.2.0)'
+        required: true
+
+permissions:
+  contents: write        # nahrát release
+  id-token: write        # keyless podpis přes cosign (OIDC)
+  attestations: write    # provenance
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }
+
+      # ── Postavit ────────────────────────────────────────────────────
+      - name: Build
+        run: make dist
+
+      - name: Self-check
+        run: bash dist/praut-install-vps.sh --check
+
+      - name: Verify reproducibility
+        run: |
+          a=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          make clean && make dist
+          b=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          [ "$a" = "$b" ] || { echo "::error::not reproducible"; exit 1; }
+          echo "sha256=$a" >> "$GITHUB_ENV"
+
+      # ── Podepsat ────────────────────────────────────────────────────
+      # Keyless: podpis je vázaný na tenhle repozitář a workflow přes OIDC,
+      # nikde se neskladuje soukromý klíč. Ověřit se dá bez důvěry k nám.
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign
+        run: |
+          cosign sign-blob --yes \
+            --output-signature dist/praut-install-vps.sh.sig \
+            --output-certificate dist/praut-install-vps.sh.pem \
+            dist/praut-install-vps.sh
+
+      - name: Build provenance attestation
+        uses: actions/attest-build-provenance@v1
+        with:
+          subject-path: dist/praut-install-vps.sh
+
+      # ── Vydat ───────────────────────────────────────────────────────
+      - name: Verification instructions
+        run: |
+          TAG="${{ github.event.inputs.tag || github.ref_name }}"
+          REPO="${{ github.repository }}"
+          cat > dist/VERIFY.md <<EOF
+          # Verifying this release
+
+          \`\`\`bash
+          sha256sum -c praut-install-vps.sh.sha256
+          \`\`\`
+
+          Expected: \`${{ env.sha256 }}\`
+
+          ## Signature (recommended)
+
+          The artifact is signed with Sigstore keyless signing. No private key
+          exists; the signature is bound to this repository and workflow.
+
+          \`\`\`bash
+          cosign verify-blob \\
+            --certificate praut-install-vps.sh.pem \\
+            --signature praut-install-vps.sh.sig \\
+            --certificate-identity-regexp "^https://github.com/${REPO}/" \\
+            --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
+            praut-install-vps.sh
+          \`\`\`
+
+          ## Build it yourself
+
+          \`\`\`bash
+          git clone https://github.com/${REPO}
+          cd AgenticDev && git checkout ${TAG}
+          make dist
+          sha256sum dist/praut-install-vps.sh
+          \`\`\`
+
+          The build is deterministic — you should get the same hash.
+          EOF
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          draft: true          # zkontroluj a vydej ručně
+          generate_release_notes: true
+          files: |
+            dist/praut-install-vps.sh
+            dist/praut-install-vps.sh.sha256
+            dist/praut-install-vps.sh.sig
+            dist/praut-install-vps.sh.pem
+            dist/VERIFY.md
+          body: |
+            > **Alpha release.** Read `SECURITY.md` → *Known limitations*
+            > before deploying.
+
+            ## Install
+
+            ```bash
+            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/praut-install-vps.sh
+            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/praut-install-vps.sh.sha256
+            sha256sum -c praut-install-vps.sh.sha256
+
+            scp praut-install-vps.sh root@your-vps:/root/
+            ssh root@your-vps 'bash /root/praut-install-vps.sh'
+            ```
+
+            `sha256: ${{ env.sha256 }}`
+
+            See `VERIFY.md` for signature verification.

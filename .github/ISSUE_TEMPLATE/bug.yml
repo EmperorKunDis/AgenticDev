@@ -1,0 +1,37 @@
+name: Bug report
+description: Something does not work as documented
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security issues do not belong here.** See [SECURITY.md](../blob/main/SECURITY.md).
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: Release tag, or output of `sha256sum praut-install-vps.sh`
+    validations: { required: true }
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where
+      options: [Server install, macOS client, Linux client, Windows client, Admin panel, Enrollment page, Other]
+    validations: { required: true }
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you expected, what happened instead, and how to reproduce it.
+    validations: { required: true }
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output
+      description: "Redact secrets first. Useful: `praut-ctl logs`, `/srv/praut/install.log`."
+      render: shell
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: Ubuntu 24.04 / macOS 15.2 / Windows 11 23H2

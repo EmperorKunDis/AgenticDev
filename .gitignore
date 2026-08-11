@@ -1,0 +1,12 @@
+.env
+*.key
+*.pem
+secrets/
+.venv/
+__pycache__/
+*.pyc
+data/
+.wo-cache/
+
+# build artefakty / build artifacts
+dist/

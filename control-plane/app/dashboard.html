@@ -1,0 +1,489 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Praut Platform</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root{
+    --ink:#111111; --ink-2:#555555; --ink-3:#8a8a8a;
+    --line:#e4e2df; --bg:#faf9f7; --panel:#ffffff;
+    --accent:#111111; --warn:#a8471f; --ok:#2d6a3f;
+    --mono:'IBM Plex Mono',ui-monospace,SFMono-Regular,Menlo,monospace;
+    --sans:-apple-system,BlinkMacSystemFont,'Segoe UI',Inter,system-ui,sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{background:var(--bg);color:var(--ink);font-family:var(--sans);
+       font-size:15px;line-height:1.5;-webkit-font-smoothing:antialiased}
+
+  /* ── Login ── */
+  #login{min-height:100vh;display:flex;align-items:center;justify-content:center}
+  #login form{width:320px}
+  #login h1{font-size:13px;letter-spacing:.22em;text-transform:uppercase;
+            font-weight:500;margin-bottom:28px;color:var(--ink-2)}
+  input,select,textarea{width:100%;padding:11px 13px;border:1px solid var(--line);
+       background:var(--panel);font-family:var(--sans);font-size:15px;color:var(--ink);
+       border-radius:0;outline:none}
+  input:focus,select:focus,textarea:focus{border-color:var(--ink)}
+  button{padding:11px 18px;border:1px solid var(--ink);background:var(--ink);color:#fff;
+       font-family:var(--sans);font-size:14px;cursor:pointer;border-radius:0}
+  button:hover{opacity:.85}
+  button.ghost{background:transparent;color:var(--ink)}
+  button.ghost:hover{background:var(--ink);color:#fff;opacity:1}
+  button.sm{padding:6px 12px;font-size:13px}
+
+  /* ── Layout ── */
+  header{border-bottom:1px solid var(--line);background:var(--panel);
+         position:sticky;top:0;z-index:10}
+  .bar{max-width:1180px;margin:0 auto;padding:0 24px;display:flex;
+       align-items:center;gap:28px;height:56px}
+  .logo{font-size:12px;letter-spacing:.22em;text-transform:uppercase;font-weight:600}
+  nav{display:flex;gap:2px;margin-left:auto}
+  nav a{padding:8px 14px;font-size:14px;color:var(--ink-2);text-decoration:none;cursor:pointer}
+  nav a.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
+  main{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  section{display:none} section.on{display:block}
+  h2{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
+     font-weight:600;margin:0 0 14px}
+  h2:not(:first-child){margin-top:44px}
+
+  /* ── Panels ── */
+  .panel{background:var(--panel);border:1px solid var(--line);padding:18px 20px;margin-bottom:12px}
+  .grid{display:grid;gap:12px}
+  .g4{grid-template-columns:repeat(4,1fr)}
+  .g2{grid-template-columns:1fr 1fr}
+  @media(max-width:820px){.g4{grid-template-columns:1fr 1fr}.g2{grid-template-columns:1fr}}
+  .stat .n{font-family:var(--mono);font-size:30px;font-weight:500;letter-spacing:-.02em}
+  .stat .l{font-size:12px;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+
+  table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}
+  th{text-align:left;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
+     color:var(--ink-3);font-weight:600;padding:11px 14px;border-bottom:1px solid var(--line)}
+  td{padding:12px 14px;border-bottom:1px solid var(--line);font-size:14px;vertical-align:top}
+  tr:last-child td{border-bottom:0}
+  .mono{font-family:var(--mono);font-size:13px}
+  .dim{color:var(--ink-3)}
+  .tag{display:inline-block;font-family:var(--mono);font-size:11px;padding:2px 7px;
+       border:1px solid var(--line);color:var(--ink-2)}
+  .tag.hot{border-color:var(--warn);color:var(--warn)}
+  .tag.ok{border-color:var(--ok);color:var(--ok)}
+
+  .row{display:flex;gap:10px;align-items:center}
+  .row.end{justify-content:flex-end}
+  label{display:block;font-size:12px;letter-spacing:.08em;text-transform:uppercase;
+        color:var(--ink-3);margin:14px 0 5px;font-weight:600}
+  .hint{font-size:13px;color:var(--ink-3);margin-top:5px;line-height:1.45}
+  .empty{padding:40px 20px;text-align:center;color:var(--ink-3);font-size:14px;
+         background:var(--panel);border:1px dashed var(--line)}
+  .err{border-left:2px solid var(--warn);padding:10px 14px;background:#fff;
+       color:var(--warn);font-size:14px;margin-bottom:12px}
+  code{font-family:var(--mono);font-size:13px;background:#f2f0ed;padding:2px 6px}
+  pre{font-family:var(--mono);font-size:13px;background:#f2f0ed;padding:14px;
+      overflow-x:auto;line-height:1.6}
+  .kill{border-left:2px solid var(--warn);background:#fff8f5}
+</style>
+</head>
+<body>
+
+<!-- ══════════ LOGIN ══════════ -->
+<div id="login">
+  <form onsubmit="doLogin(event)">
+    <img src="/logo.svg" alt="Praut" style="height:30px;display:block;margin:0 auto 18px"
+         onerror="this.style.display='none'">
+    <h1>Praut Platform</h1>
+    <div id="loginErr"></div>
+    <input id="pw" type="password" placeholder="heslo do nástěnky" autofocus>
+    <button style="width:100%;margin-top:12px">Vstoupit</button>
+    <p class="hint">Heslo ti vypsal instalační skript. Znovu ho zobrazíš na VPS příkazem <code>sudo praut-info</code>.</p>
+  </form>
+</div>
+
+<!-- ══════════ APP ══════════ -->
+<div id="app" style="display:none">
+<header><div class="bar">
+  <span class="logo">Praut</span>
+  <nav>
+    <a data-t="prehled" class="on" onclick="tab('prehled')">Přehled</a>
+    <a data-t="rozhodnuti" onclick="tab('rozhodnuti')">Rozhodnutí <span id="decBadge"></span></a>
+    <a data-t="ukoly" onclick="tab('ukoly')">Úkoly</a>
+    <a data-t="projekty" onclick="tab('projekty')">Projekty</a>
+    <a data-t="tym" onclick="tab('tym')">Tým</a>
+    <a data-t="nastaveni" onclick="tab('nastaveni')">Nastavení</a>
+  </nav>
+</div></header>
+
+<main>
+  <div id="banner"></div>
+
+  <!-- ── PŘEHLED ── -->
+  <section id="prehled" class="on">
+    <h2>Dnes</h2>
+    <div class="grid g4">
+      <div class="panel stat"><div class="n" id="sReady">–</div><div class="l">čeká na práci</div></div>
+      <div class="panel stat"><div class="n" id="sRun">–</div><div class="l">běží teď</div></div>
+      <div class="panel stat"><div class="n" id="sBlock">–</div><div class="l">čeká na tebe</div></div>
+      <div class="panel stat"><div class="n" id="sCost">–</div><div class="l">útrata dnes</div></div>
+    </div>
+
+    <h2>Kdo právě pracuje</h2>
+    <div id="active"></div>
+
+    <h2>Poslední události</h2>
+    <div id="events"></div>
+  </section>
+
+  <!-- ── ROZHODNUTÍ ── -->
+  <section id="rozhodnuti">
+    <h2>Čeká na tvoje rozhodnutí</h2>
+    <p class="hint" style="margin-bottom:16px">Agent narazil na volbu, kterou nemá v politice pokrytou, a zastavil se.
+      Tvoje odpověď se uloží jako ADR a příště se nabídne jako precedent.</p>
+    <div id="decisions"></div>
+  </section>
+
+  <!-- ── ÚKOLY ── -->
+  <section id="ukoly">
+    <h2>Nový úkol</h2>
+    <div class="panel">
+      <div id="taskErr"></div>
+      <div class="grid g2">
+        <div>
+          <label>Projekt</label>
+          <select id="tProject"></select>
+        </div>
+        <div>
+          <label>Druh</label>
+          <select id="tKind">
+            <option value="feature">feature — nová funkčnost</option>
+            <option value="bugfix">bugfix — oprava</option>
+            <option value="refactor">refactor — přepis</option>
+          </select>
+        </div>
+      </div>
+      <label>Název</label>
+      <input id="tTitle" placeholder="Import zaměstnaneckých karet z DE systému">
+      <label>Definition of Done — jedna položka na řádek</label>
+      <textarea id="tDod" rows="4" placeholder="unit testy pokrývají mapování polí&#10;integrační test proti fixture DE exportu&#10;ADR pro volbu parseru"></textarea>
+      <p class="hint">Bez DoD úkol nezaložím. Agent by neměl jak poznat, že skončil.</p>
+      <div class="grid g2">
+        <div><label>Rozpočet (Kč)</label><input id="tBudget" type="number" value="300"></div>
+        <div><label>Riziko</label>
+          <select id="tRisk">
+            <option value="low">low — bez lidské brány</option>
+            <option value="standard" selected>standard</option>
+            <option value="elevated">elevated — vždy schvaluješ</option>
+            <option value="high">high</option>
+          </select></div>
+      </div>
+      <div class="row end" style="margin-top:18px"><button onclick="newTask()">Založit úkol</button></div>
+    </div>
+
+    <h2>Všechny úkoly</h2>
+    <div id="tasks"></div>
+  </section>
+
+  <!-- ── PROJEKTY ── -->
+  <section id="projekty">
+    <h2>Nový projekt</h2>
+    <div class="panel">
+      <div id="projErr"></div>
+      <div class="grid g2">
+        <div><label>Kód projektu</label>
+          <input id="pCode" placeholder="montexbau" class="mono">
+          <p class="hint">Bez diakritiky a mezer. Použije se jako název git repa.</p></div>
+        <div><label>Klient</label><input id="pClient" placeholder="MontexBau s.r.o."></div>
+      </div>
+      <div class="grid g2">
+        <div><label>Klasifikace dat</label>
+          <select id="pClass">
+            <option value="public">public — cokoli</option>
+            <option value="internal" selected>internal — cloud API</option>
+            <option value="confidential">confidential — cloud + zero retention</option>
+            <option value="restricted">restricted — JEN lokální model</option>
+          </select>
+          <p class="hint">restricted natvrdo zakáže cloudové modely. Pro zdravotnictví a osobní údaje.</p></div>
+        <div><label>Měsíční rozpočet (Kč)</label><input id="pBudget" type="number" value="5000"></div>
+      </div>
+      <label>Existující repozitář — nepovinné</label>
+      <input id="pImport" placeholder="https://github.com/praut/montexbau.git" class="mono">
+      <p class="hint">Když vyplníš, naklonuje se i s historií a větvemi. Jinak vznikne prázdné repo s kostrou <code>prd/</code>.</p>
+      <div class="row end" style="margin-top:18px"><button onclick="newProject()">Založit projekt</button></div>
+    </div>
+
+    <h2>Projekty</h2>
+    <div id="projects"></div>
+  </section>
+
+  <!-- ── TÝM ── -->
+  <section id="tym">
+    <h2>Připojení nového Macu</h2>
+    <div class="panel">
+      <p style="margin-bottom:10px">Pusť na tom Macu tenhle jeden řádek:</p>
+      <pre id="joinCmd">–</pre>
+      <p class="hint">Po doběhnutí má člověk na ploše ikonu <strong>Praut — Začít práci</strong>. Nic dalšího nepotřebuje.</p>
+    </div>
+
+    <h2>Pracovní stanice</h2>
+    <div id="team"></div>
+
+    <h2>Nouzové zastavení</h2>
+    <div class="panel kill">
+      <p style="margin-bottom:12px">Zastaví vydávání nových work orderů. Rozdělaná práce dojede do nejbližšího checkpointu.</p>
+      <div class="row"><button class="ghost sm" onclick="kill(false)">Zastavit vydávání</button>
+                       <button class="ghost sm" onclick="kill(true)">Znovu povolit</button></div>
+    </div>
+  </section>
+
+  <section id="nastaveni">
+    <h2>Nastavení</h2>
+    <div class="panel">
+      <p class="hint" style="margin:0">Změny platí okamžitě, restart není potřeba.
+      Hesla se zobrazují zamaskovaná — pole nech být, pokud ho neměníš.</p>
+    </div>
+    <div id="setForm"></div>
+
+    <h2>Jen ke čtení</h2>
+    <div class="panel">
+      <p class="hint" style="margin-bottom:10px">Tyhle hodnoty se čtou při startu.
+      Mění se v <code>/srv/praut/config/.env</code> a pak <code>praut-ctl up</code>.</p>
+      <div id="setRO"></div>
+    </div>
+  </section>
+</main>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const czk = n => new Intl.NumberFormat('cs-CZ',{maximumFractionDigits:0}).format(n||0)+' Kč';
+const ago = t => { if(!t) return '–'; const s=(Date.now()-new Date(t))/1000;
+  if(s<60) return 'teď'; if(s<3600) return Math.floor(s/60)+' min';
+  if(s<86400) return Math.floor(s/3600)+' h'; return Math.floor(s/86400)+' d'; };
+
+async function api(path, opts={}) {
+  const r = await fetch(path, {credentials:'same-origin',
+    headers:{'content-type':'application/json'}, ...opts});
+  if (r.status === 401) { $('#app').style.display='none'; $('#login').style.display='flex'; throw new Error('nepřihlášeno'); }
+  const body = await r.json().catch(()=>({}));
+  if (!r.ok) throw new Error(body.detail || ('chyba '+r.status));
+  return body;
+}
+function showErr(sel, msg){ $(sel).innerHTML = `<div class="err">${esc(msg)}</div>`; }
+
+// ── login ──
+async function doLogin(e){
+  e.preventDefault();
+  try {
+    await api('/v1/auth/dashboard', {method:'POST', body: JSON.stringify({token: $('#pw').value})});
+    $('#login').style.display='none'; $('#app').style.display='block'; boot();
+  } catch(err){ showErr('#loginErr', 'Špatné heslo.'); }
+}
+
+function tab(name){
+  document.querySelectorAll('section').forEach(s=>s.classList.toggle('on', s.id===name));
+  document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on', a.dataset.t===name));
+  ({rozhodnuti:loadDecisions, ukoly:loadTasks, projekty:loadProjects, tym:loadTeam, prehled:loadBoard, nastaveni:loadSettings}[name]||(()=>{}))();
+}
+
+// ── přehled ──
+async function loadBoard(){
+  const b = await api('/v1/board');
+  const c = b.task_counts||{};
+  $('#sReady').textContent  = c.ready||0;
+  $('#sRun').textContent    = (c.assigned||0)+(c.running||0);
+  $('#sBlock').textContent  = b.pending_decisions.length;
+  $('#sCost').textContent   = czk(b.spend_today_czk);
+
+  const n = b.pending_decisions.length;
+  $('#decBadge').innerHTML = n ? `<span class="tag hot">${n}</span>` : '';
+
+  $('#banner').innerHTML = b.platform && !b.platform.issuing_enabled
+    ? `<div class="err">Vydávání work orderů je zastavené. Důvod: ${esc(b.platform.reason||'neuveden')}</div>` : '';
+
+  $('#active').innerHTML = b.active_work.length ? `<table><tr><th>Kdo</th><th>Projekt</th><th>Úkol</th><th>Tep</th></tr>` +
+    b.active_work.map(a=>`<tr><td>${esc(a.who)}</td><td class="mono">${esc(a.project)}</td>
+      <td>${esc(a.title)}</td><td class="dim">${ago(a.heartbeat_at)}</td></tr>`).join('') + `</table>`
+    : `<div class="empty">Nikdo teď nepracuje.</div>`;
+
+  $('#events').innerHTML = b.recent_events.length ? `<table>` +
+    b.recent_events.map(e=>`<tr><td class="dim mono" style="width:70px">${ago(e.ts)}</td>
+      <td class="mono">${esc(e.subject_type)}</td><td>${esc(e.verb)}</td>
+      <td class="dim mono">${esc(JSON.stringify(e.payload).slice(0,70))}</td></tr>`).join('') + `</table>`
+    : `<div class="empty">Zatím se nic nestalo.</div>`;
+}
+
+// ── rozhodnutí ──
+async function loadDecisions(){
+  const b = await api('/v1/board');
+  $('#decisions').innerHTML = b.pending_decisions.length ? b.pending_decisions.map(d=>`
+    <div class="panel">
+      <div class="row"><span class="tag">${esc(d.project)}</span><span class="dim">${esc(d.title)}</span>
+        <span class="dim" style="margin-left:auto">${ago(d.created_at)}</span></div>
+      <p style="margin:12px 0 4px;font-size:16px">${esc(d.question)}</p>
+      ${d.recommended ? `<p class="hint">Agent doporučuje: <strong>${esc(d.recommended)}</strong></p>`:''}
+      <label>Tvoje rozhodnutí</label>
+      <input id="ch_${d.id}" placeholder="např. použít csv-parse, ne vlastní parser">
+      <label>Proč — uloží se jako ADR</label>
+      <textarea id="rt_${d.id}" rows="2" placeholder="Knihovna je udržovaná a řeší escapování, které bychom stejně museli napsat."></textarea>
+      <div class="row end" style="margin-top:14px">
+        <button class="ghost sm" onclick="resolve('${d.id}',false)">Zamítnout</button>
+        <button class="sm" onclick="resolve('${d.id}',true)">Schválit a pokračovat</button>
+      </div>
+    </div>`).join('') : `<div class="empty">Nic nečeká. Agenti jedou.</div>`;
+}
+async function resolve(id, approve){
+  const chosen = $('#ch_'+id).value.trim(), rationale = $('#rt_'+id).value.trim();
+  if(approve && !chosen) return alert('Napiš, pro co ses rozhodl.');
+  await api(`/v1/decisions/${id}/resolve`, {method:'POST',
+    body: JSON.stringify({chosen: chosen||'zamítnuto', rationale, approve})});
+  loadDecisions();
+}
+
+// ── úkoly ──
+async function loadTasks(){
+  const [ts, ps] = await Promise.all([api('/v1/tasks'), api('/v1/projects')]);
+  $('#tProject').innerHTML = ps.map(p=>`<option value="${esc(p.code)}">${esc(p.code)} — ${esc(p.client_name||'')}</option>`).join('');
+  $('#tasks').innerHTML = ts.length ? `<table><tr><th>Stav</th><th>Projekt</th><th>Úkol</th><th>Kdo</th><th>Rozpočet</th></tr>` +
+    ts.map(t=>`<tr>
+      <td><span class="tag ${t.state==='blocked'?'hot':t.state==='done'?'ok':''}">${esc(t.state)}</span></td>
+      <td class="mono">${esc(t.project)}</td><td>${esc(t.title)}</td>
+      <td class="dim">${esc(t.assignee||'–')}</td>
+      <td class="mono ${+t.spent_czk > +t.budget_czk ? 'tag hot':''}">${czk(t.spent_czk)} / ${czk(t.budget_czk)}</td>
+    </tr>`).join('') + `</table>` : `<div class="empty">Zatím žádné úkoly.</div>`;
+}
+async function newTask(){
+  const dod = $('#tDod').value.split('\n').map(s=>s.trim()).filter(Boolean);
+  try {
+    await api('/v1/tasks', {method:'POST', body: JSON.stringify({
+      project: $('#tProject').value, title: $('#tTitle').value.trim(), kind: $('#tKind').value,
+      dod, risk: $('#tRisk').value, budget_czk: +$('#tBudget').value })});
+    $('#tTitle').value=''; $('#tDod').value=''; $('#taskErr').innerHTML='';
+    loadTasks();
+  } catch(e){ showErr('#taskErr', e.message); }
+}
+
+// ── projekty ──
+async function loadProjects(){
+  const ps = await api('/v1/projects');
+  $('#projects').innerHTML = ps.length ? `<table><tr><th>Kód</th><th>Klient</th><th>Data</th><th>Úkolů</th><th>Útrata / měsíc</th></tr>` +
+    ps.map(p=>`<tr><td class="mono">${esc(p.code)}</td><td>${esc(p.client_name||'')}</td>
+      <td><span class="tag ${p.data_class==='restricted'?'hot':''}">${esc(p.data_class)}</span></td>
+      <td class="mono">${p.task_count}</td>
+      <td class="mono">${czk(p.spent_czk)} / ${czk(p.budget_czk_month)}</td></tr>`).join('') + `</table>`
+    : `<div class="empty">Založ první projekt.</div>`;
+}
+async function newProject(){
+  try {
+    const r = await api('/v1/projects', {method:'POST', body: JSON.stringify({
+      code: $('#pCode').value.trim(), client_name: $('#pClient').value.trim(),
+      data_class: $('#pClass').value, budget_czk_month: +$('#pBudget').value,
+      import_url: $('#pImport').value.trim() || null })});
+    $('#projErr').innerHTML = `<div class="err" style="border-color:var(--ok);color:var(--ok)">
+      Založeno. ${esc(r.next)}</div>`;
+    $('#pCode').value=''; $('#pClient').value=''; $('#pImport').value='';
+    loadProjects();
+  } catch(e){ showErr('#projErr', e.message); }
+}
+
+// ── tým ──
+async function loadTeam(){
+  const t = await api('/v1/team');
+  $('#joinCmd').textContent =
+    `curl -fsSL ${location.origin}/install-mac.sh | bash -s -- <JOIN-TOKEN>`;
+  $('#team').innerHTML = t.length ? `<table><tr><th>Člověk</th><th>Stroj</th><th>Kanál</th><th>Naposledy</th><th></th></tr>` +
+    t.map(w=>`<tr>
+      <td>${esc(w.display_name)}</td><td class="mono">${esc(w.hostname)}</td>
+      <td><select class="sm" onchange="chan('${w.id}',this.value)" style="width:auto;padding:4px 8px;font-size:13px">
+        ${['canary','beta','stable'].map(c=>`<option ${w.channel===c?'selected':''}>${c}</option>`).join('')}
+      </select></td>
+      <td class="dim">${ago(w.last_seen_at)}</td>
+      <td>${w.revoked_at ? '<span class="tag hot">odebráno</span>'
+        : `<button class="ghost sm" onclick="revoke('${w.id}')">Odebrat</button>`}</td>
+    </tr>`).join('') + `</table>` : `<div class="empty">Zatím žádná stanice.</div>`;
+}
+async function chan(id,v){ await api(`/v1/team/${id}/channel`,{method:'POST',body:JSON.stringify({channel:v})}); }
+async function revoke(id){
+  if(!confirm('Odebrat této stanici přístup? Rozdělaná práce se zastaví.')) return;
+  await api(`/v1/team/${id}/revoke`,{method:'POST'}); loadTeam();
+}
+async function kill(enabled){
+  const reason = enabled ? '' : (prompt('Důvod zastavení:')||'ruční zásah');
+  await api('/v1/kill-switch',{method:'POST',body:JSON.stringify({enabled,reason})});
+  loadBoard();
+}
+
+// ── nastavení ──
+let SET = null;
+
+async function loadSettings(){
+  SET = await api('/v1/settings');
+  const byGroup = {};
+  SET.fields.forEach(f => (byGroup[f.group] ||= []).push(f));
+
+  $('#setForm').innerHTML = Object.entries(SET.groups).map(([gid, gname]) => {
+    const fs = byGroup[gid] || [];
+    if (!fs.length) return '';
+    return `<h2>${gname}</h2><div class="panel">` + fs.map(f => {
+      const id = 'set_' + f.key;
+      let input;
+      if (f.kind === 'textarea') {
+        input = `<textarea id="${id}" rows="3" style="width:100%">${esc(f.value)}</textarea>`;
+      } else if (f.kind.startsWith('select:')) {
+        input = `<select id="${id}" style="width:100%">` + f.kind.slice(7).split(',')
+          .map(o => `<option${o === f.value ? ' selected' : ''}>${esc(o)}</option>`).join('')
+          + `</select>`;
+      } else {
+        const t = (f.kind === 'password' || f.secret) ? 'password'
+                : (f.kind === 'number' ? 'number' : 'text');
+        input = `<input id="${id}" type="${t}" value="${esc(f.value)}" style="width:100%"`
+              + (f.secret ? ` onfocus="if(this.value==='\u2022'.repeat(8))this.value=''"` : '') + `>`;
+      }
+      return `<div style="margin-bottom:14px">
+        <label for="${id}" style="display:block;font-size:13px;margin-bottom:5px">${esc(f.label)}
+          <code style="opacity:.5;font-size:11px">${esc(f.key)}</code></label>
+        ${input}
+        ${f.hint ? `<p class="hint" style="margin:5px 0 0">${esc(f.hint)}</p>` : ''}
+      </div>`;
+    }).join('') + `</div>`;
+  }).join('')
+  + `<div class="row" style="margin-top:16px">
+       <button onclick="saveSettings()">Uložit</button>
+       <span id="setMsg" class="hint"></span>
+     </div>`;
+
+  $('#setRO').innerHTML = Object.entries(SET.readonly).map(([k, v]) =>
+    `<div style="display:flex;gap:12px;padding:5px 0;font-size:13px">
+       <code style="min-width:190px;opacity:.6">${esc(k)}</code>
+       <span>${esc(v) || '<span class="hint">—</span>'}</span>
+     </div>`).join('');
+}
+
+async function saveSettings(){
+  const values = {};
+  SET.fields.forEach(f => {
+    const el = document.getElementById('set_' + f.key);
+    if (el) values[f.key] = el.value;
+  });
+  $('#setMsg').textContent = 'ukládám…';
+  try {
+    const r = await api('/v1/settings', {method:'POST', body:JSON.stringify({values})});
+    $('#setMsg').textContent = r.changed.length
+      ? (r.note || `uloženo (${r.changed.length})`) : 'nic se nezměnilo';
+    loadSettings();
+  } catch(e) {
+    $('#setMsg').textContent = 'nepovedlo se: ' + e.message;
+  }
+}
+
+function esc(x){
+  return String(x ?? '').replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+function boot(){ loadBoard(); setInterval(()=>{ if($('#prehled').classList.contains('on')) loadBoard(); }, 15000); }
+
+// autologin, pokud je cookie platná
+api('/v1/board').then(()=>{ $('#login').style.display='none'; $('#app').style.display='block'; boot(); }).catch(()=>{});
+</script>
+</body>
+</html>

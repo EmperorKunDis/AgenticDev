@@ -1,0 +1,462 @@
+"""
+Admin API — všechno, co obsluhuje nástěnka.
+Zakládání projektů, úkolů, registrace stanic, schvalování rozhodnutí.
+"""
+from __future__ import annotations
+
+import json, os, re, secrets
+from datetime import datetime, timedelta, timezone
+
+import httpx
+import jwt
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from pydantic import BaseModel
+
+from .main import DEF_MODEL, JWT_SECRET, _emit, db, now
+from . import settings as cfg
+
+router = APIRouter()
+
+JOIN_TOKEN      = os.environ.get("JOIN_TOKEN", "")
+DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
+FORGEJO_URL     = os.environ.get("FORGEJO_URL", "http://forgejo:3000")
+FORGEJO_TOKEN   = os.environ.get("FORGEJO_TOKEN", "")
+GIT_SSH         = os.environ.get("GIT_SSH_BASE", "ssh://git@vps:2222")
+HARNESS_IMAGE   = os.environ.get("HARNESS_IMAGE", "praut/harness:dev")
+
+PHASES = ["discovery", "design", "implementation", "hardening", "delivery", "support"]
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Přihlášení do nástěnky (jen tailnet + sdílené heslo)
+# ═══════════════════════════════════════════════════════════════
+class Login(BaseModel):
+    token: str
+
+
+@router.post("/v1/auth/dashboard")
+def dashboard_login(body: Login, response: Response):
+    # Přes nastavení, ať změna hesla platí hned a ne až po restartu.
+    pw = cfg.get("DASHBOARD_TOKEN", DASHBOARD_TOKEN)
+    if not pw or not secrets.compare_digest(body.token, pw):
+        raise HTTPException(401, "špatné heslo")
+    tok = jwt.encode(
+        {"role": "operator", "exp": now() + timedelta(days=30)},
+        JWT_SECRET, algorithm="HS256")
+    response.set_cookie("praut_session", tok, httponly=True,
+                        samesite="lax", max_age=30 * 24 * 3600)
+    return {"ok": True}
+
+
+def operator(praut_session: str | None = Cookie(default=None)) -> dict:
+    if not praut_session:
+        raise HTTPException(401, "nepřihlášeno")
+    try:
+        return jwt.decode(praut_session, JWT_SECRET, algorithms=["HS256"])
+    except jwt.PyJWTError:
+        raise HTTPException(401, "relace vypršela")
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Registrace pracovní stanice (nahrazuje ruční SQL)
+# ═══════════════════════════════════════════════════════════════
+class Register(BaseModel):
+    join_token: str
+    hostname: str
+    device_key_fp: str
+    display_name: str
+    email: str | None = None
+    ssh_public_key: str | None = None      # bez něj nefunguje git clone
+
+
+@router.post("/v1/workstations/register")
+def register_ws(b: Register):
+    if not JOIN_TOKEN or not secrets.compare_digest(b.join_token, JOIN_TOKEN):
+        raise HTTPException(403, "neplatný join token")
+    with db() as c:
+        p = c.execute("SELECT * FROM principal WHERE display_name = %s", (b.display_name,)).fetchone()
+        if not p:
+            p = c.execute(
+                """INSERT INTO principal (kind, display_name, email)
+                   VALUES ('human', %s, %s) RETURNING *""",
+                (b.display_name, b.email)).fetchone()
+        ws = c.execute(
+            """INSERT INTO workstation (principal_id, hostname, device_key_fp, channel)
+               VALUES (%s, %s, %s, 'stable')
+               ON CONFLICT (device_key_fp) DO UPDATE
+                 SET hostname = EXCLUDED.hostname, revoked_at = NULL
+               RETURNING *""",
+            (p["id"], b.hostname, b.device_key_fp)).fetchone()
+        _emit(c, p["id"], "workstation", str(ws["id"]), "registered",
+              {"hostname": b.hostname}, b.device_key_fp)
+
+    git_ok = _forgejo_add_key(b.display_name, b.email, b.hostname, b.ssh_public_key)
+
+    return {"workstation_id": ws["id"], "channel": ws["channel"],
+            "git_ready": git_ok,
+            "git_ssh": GIT_SSH,
+            "dashboard": os.environ.get("PRAUT_DOMAIN", "")}
+
+
+def _forgejo_add_key(display_name: str, email: str | None,
+                     hostname: str, pubkey: str | None) -> bool:
+    """
+    Bez klíče ve Forgeju nefunguje `git clone`. Zakládá i uživatele,
+    když ještě neexistuje — jinak by nový člověk nemohl commitovat pod sebou.
+    """
+    if not (pubkey and FORGEJO_TOKEN):
+        return False
+    login = re.sub(r"[^a-z0-9]+", "", display_name.lower().replace(" ", "."))[:38] or "dev"
+    h = {"Authorization": f"token {FORGEJO_TOKEN}", "content-type": "application/json"}
+    try:
+        r = httpx.get(f"{FORGEJO_URL}/api/v1/users/{login}", headers=h, timeout=15)
+        if r.status_code == 404:
+            httpx.post(f"{FORGEJO_URL}/api/v1/admin/users", headers=h, timeout=20,
+                       json={"username": login, "email": email or f"{login}@praut.local",
+                             "password": secrets.token_urlsafe(24),
+                             "must_change_password": False})
+        r = httpx.post(f"{FORGEJO_URL}/api/v1/admin/users/{login}/keys", headers=h, timeout=20,
+                       json={"title": f"praut-{hostname}", "key": pubkey.strip()})
+        return r.status_code in (201, 422)          # 422 = klíč už tam je
+    except Exception:
+        return False
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Projekty
+# ═══════════════════════════════════════════════════════════════
+class NewProject(BaseModel):
+    code: str
+    client_name: str
+    data_class: str = "internal"
+    budget_czk_month: float = 5000
+    import_url: str | None = None      # existující repo — naklonuje se i s historií
+
+
+PRD_FILES = {
+    "00-context.md":       "# Kontext klienta\n\nKdo je klient, co dělá, kdo je kontaktní osoba,\njakým jazykem se s ním komunikuje.\n",
+    "10-requirements.md":  "# Požadavky\n\n## REQ-001\n\nPopiš první požadavek. Číslování je stabilní — na ID se odkazují úkoly.\n",
+    "20-constraints.md":   "# Omezení\n\nTechnická, legislativní, rozpočtová.\n",
+    "30-architecture.md":  "# Cílová architektura\n",
+    "50-glossary.md":      "# Glosář\n\nDoménové pojmy klienta. NEJDŮLEŽITĚJŠÍ SOUBOR.\nAgent bez klientské terminologie píše syntakticky správný\na sémanticky špatný kód.\n\n| Pojem | Význam |\n|---|---|\n|  |  |\n",
+    "40-decisions/README.md": "# ADR\n\nJeden soubor = jedno rozhodnutí.\n",
+}
+
+
+def _forgejo_create_repo(code: str) -> str | None:
+    if not FORGEJO_TOKEN:
+        return None
+    try:
+        r = httpx.post(f"{FORGEJO_URL}/api/v1/user/repos",
+                       headers={"Authorization": f"token {FORGEJO_TOKEN}"},
+                       json={"name": code, "private": True, "auto_init": True,
+                             "default_branch": "main",
+                             "description": f"Praut projekt {code}"},
+                       timeout=30)
+        if r.status_code in (201, 409):
+            return f"{GIT_SSH}/{r.json().get('owner', {}).get('login', 'praut')}/{code}.git" \
+                   if r.status_code == 201 else f"{GIT_SSH}/praut/{code}.git"
+    except Exception:
+        pass
+    return None
+
+
+def _forgejo_migrate(code: str, url: str) -> str | None:
+    """Naklonuje existující repo i s historií a větvemi."""
+    if not FORGEJO_TOKEN:
+        return None
+    try:
+        r = httpx.post(f"{FORGEJO_URL}/api/v1/repos/migrate",
+                       headers={"Authorization": f"token {FORGEJO_TOKEN}"},
+                       json={"clone_addr": url, "repo_name": code,
+                             "private": True, "mirror": False, "service": "git"},
+                       timeout=300)
+        if r.status_code in (201, 409):
+            return f"{GIT_SSH}/praut/{code}.git"
+    except Exception:
+        pass
+    return None
+
+
+def _forgejo_seed_prd(code: str, owner: str = "praut") -> None:
+    if not FORGEJO_TOKEN:
+        return
+    import base64 as b64
+    for path, content in PRD_FILES.items():
+        try:
+            httpx.post(
+                f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/prd/{path}",
+                headers={"Authorization": f"token {FORGEJO_TOKEN}"},
+                json={"content": b64.b64encode(content.encode()).decode(),
+                      "message": f"prd: {path}", "branch": "main"},
+                timeout=30)
+        except Exception:
+            pass
+
+
+@router.post("/v1/projects")
+def create_project(p: NewProject, op: dict = Depends(operator)):
+    code = p.code.strip().lower().replace(" ", "-")
+
+    if p.import_url:
+        repo = _forgejo_migrate(code, p.import_url) or f"{GIT_SSH}/praut/{code}.git"
+    else:
+        repo = _forgejo_create_repo(code) or f"{GIT_SSH}/praut/{code}.git"
+        _forgejo_seed_prd(code)
+
+    with db() as c:
+        client = c.execute("SELECT * FROM client WHERE name = %s", (p.client_name,)).fetchone()
+        if not client:
+            client = c.execute("INSERT INTO client (name) VALUES (%s) RETURNING *",
+                               (p.client_name,)).fetchone()
+        exists = c.execute("SELECT 1 FROM project WHERE code = %s", (code,)).fetchone()
+        if exists:
+            raise HTTPException(409, f"projekt '{code}' už existuje")
+
+        models = [os.environ.get("LOCAL_MODEL", "local/qwen2.5-coder:32b")] \
+                 if p.data_class == "restricted" else [DEF_MODEL]
+        proj = c.execute(
+            """INSERT INTO project (client_id, code, repo_url, data_class,
+                                    model_allowlist, budget_czk_month)
+               VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
+            (client["id"], code, repo, p.data_class, models, p.budget_czk_month)).fetchone()
+
+        for i, kind in enumerate(PHASES):
+            c.execute(
+                """INSERT INTO phase (project_id, kind, order_idx, active)
+                   VALUES (%s,%s,%s,%s)""",
+                (proj["id"], kind, i, kind == "implementation"))
+        _emit(c, None, "project", str(proj["id"]), "created", {"code": code}, code)
+
+    return {"project": proj, "repo_url": repo,
+            "prd_seeded": bool(FORGEJO_TOKEN),
+            "next": f"Vyplň prd/{code}/50-glossary.md, pak založ první úkol."}
+
+
+@router.get("/v1/projects")
+def list_projects(op: dict = Depends(operator)):
+    with db() as c:
+        return c.execute(
+            """SELECT p.*, cl.name AS client_name,
+                      (SELECT count(*) FROM task t JOIN phase ph ON ph.id=t.phase_id
+                        WHERE ph.project_id = p.id) AS task_count,
+                      (SELECT COALESCE(SUM(ar.cost_czk),0) FROM agent_run ar
+                         JOIN task t ON t.id=ar.task_id JOIN phase ph ON ph.id=t.phase_id
+                        WHERE ph.project_id = p.id) AS spent_czk
+               FROM project p LEFT JOIN client cl ON cl.id = p.client_id
+               ORDER BY p.created_at DESC""").fetchall()
+
+
+class PhaseSwitch(BaseModel):
+    kind: str
+
+
+@router.post("/v1/projects/{code}/phase")
+def set_phase(code: str, b: PhaseSwitch, op: dict = Depends(operator)):
+    if b.kind not in PHASES:
+        raise HTTPException(400, f"neznámá fáze; povolené: {PHASES}")
+    with db() as c:
+        pr = c.execute("SELECT id FROM project WHERE code = %s", (code,)).fetchone()
+        if not pr:
+            raise HTTPException(404, "projekt neexistuje")
+        c.execute("UPDATE phase SET active = false WHERE project_id = %s", (pr["id"],))
+        c.execute("UPDATE phase SET active = true WHERE project_id = %s AND kind = %s",
+                  (pr["id"], b.kind))
+    return {"ok": True, "active_phase": b.kind}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Úkoly
+# ═══════════════════════════════════════════════════════════════
+class NewTask(BaseModel):
+    project: str
+    title: str
+    kind: str = "feature"
+    spec_ref: str | None = None
+    dod: list[str] = []
+    write_scope: list[str] = ["src/**", "tests/**"]
+    risk: str = "standard"
+    budget_czk: float = 300
+    priority: int = 100
+
+
+@router.post("/v1/tasks")
+def create_task(t: NewTask, op: dict = Depends(operator)):
+    if not t.dod:
+        raise HTTPException(400, "Úkol bez Definition of Done nezaložím — "
+                                 "agent by neměl jak poznat, že skončil.")
+    with db() as c:
+        ph = c.execute(
+            """SELECT ph.id FROM phase ph JOIN project p ON p.id = ph.project_id
+               WHERE p.code = %s AND ph.active LIMIT 1""", (t.project,)).fetchone()
+        if not ph:
+            raise HTTPException(404, f"projekt '{t.project}' nemá aktivní fázi")
+        row = c.execute(
+            """INSERT INTO task (phase_id, kind, title, spec_ref, dod, write_scope,
+                                 risk, budget_czk, state, priority)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'ready',%s) RETURNING *""",
+            (ph["id"], t.kind, t.title, t.spec_ref, json.dumps(t.dod),
+             t.write_scope, t.risk, t.budget_czk, t.priority)).fetchone()
+        _emit(c, None, "task", str(row["id"]), "created", {"title": t.title}, str(row["id"]))
+    return {"task": row}
+
+
+@router.get("/v1/tasks")
+def list_tasks(state: str | None = None, op: dict = Depends(operator)):
+    q = """SELECT t.*, p.code AS project, ph.kind AS phase,
+                  COALESCE((SELECT SUM(cost_czk) FROM agent_run WHERE task_id=t.id),0) AS spent_czk,
+                  (SELECT display_name FROM principal pr
+                     JOIN workstation w ON w.principal_id=pr.id
+                     JOIN assignment a ON a.workstation_id=w.id
+                    WHERE a.task_id=t.id AND a.state='active' LIMIT 1) AS assignee
+           FROM task t JOIN phase ph ON ph.id=t.phase_id JOIN project p ON p.id=ph.project_id"""
+    with db() as c:
+        if state:
+            return c.execute(q + " WHERE t.state = %s ORDER BY t.priority, t.created_at",
+                             (state,)).fetchall()
+        return c.execute(q + " ORDER BY t.priority, t.created_at LIMIT 200").fetchall()
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Rozhodnutí
+# ═══════════════════════════════════════════════════════════════
+class Resolve(BaseModel):
+    chosen: str
+    rationale: str
+    approve: bool = True
+
+
+@router.post("/v1/decisions/{did}/resolve")
+def resolve(did: str, b: Resolve, op: dict = Depends(operator)):
+    with db() as c:
+        d = c.execute(
+            """UPDATE decision
+                  SET state = %s, chosen = %s, rationale = %s, decided_at = now()
+                WHERE id = %s AND state = 'pending_human'
+              RETURNING *""",
+            ("approved" if b.approve else "rejected", b.chosen, b.rationale, did)).fetchone()
+        if not d:
+            raise HTTPException(409, "rozhodnutí už bylo vyřešeno")
+        c.execute("UPDATE task SET state = %s WHERE id = %s",
+                  ("ready" if b.approve else "backlog", d["task_id"]))
+        _emit(c, None, "decision", did, "resolved",
+              {"chosen": b.chosen, "approved": b.approve}, did)
+    return {"ok": True, "task_state": "ready" if b.approve else "backlog"}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Tým
+# ═══════════════════════════════════════════════════════════════
+@router.get("/v1/team")
+def team(op: dict = Depends(operator)):
+    with db() as c:
+        return c.execute(
+            """SELECT w.*, p.display_name, p.email FROM workstation w
+               JOIN principal p ON p.id = w.principal_id ORDER BY w.last_seen_at DESC NULLS LAST"""
+        ).fetchall()
+
+
+@router.post("/v1/team/{ws_id}/revoke")
+def revoke_ws(ws_id: str, op: dict = Depends(operator)):
+    with db() as c:
+        c.execute("UPDATE workstation SET revoked_at = now() WHERE id = %s", (ws_id,))
+        _emit(c, None, "workstation", ws_id, "revoked", {}, f"revoke:{ws_id}")
+    return {"ok": True}
+
+
+class Channel(BaseModel):
+    channel: str
+
+
+@router.post("/v1/team/{ws_id}/channel")
+def set_channel(ws_id: str, b: Channel, op: dict = Depends(operator)):
+    if b.channel not in ("canary", "beta", "stable"):
+        raise HTTPException(400, "kanál musí být canary, beta nebo stable")
+    with db() as c:
+        c.execute("UPDATE workstation SET channel = %s WHERE id = %s", (b.channel, ws_id))
+    return {"ok": True}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Kill switch
+# ═══════════════════════════════════════════════════════════════
+class Kill(BaseModel):
+    enabled: bool
+    reason: str = ""
+
+
+@router.post("/v1/kill-switch")
+def kill_switch(b: Kill, op: dict = Depends(operator)):
+    with db() as c:
+        c.execute("""UPDATE platform_state
+                        SET issuing_enabled = %s, reason = %s, updated_at = now()
+                      WHERE id = 1""", (b.enabled, b.reason))
+    return {"issuing_enabled": b.enabled}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Nástěnka — všechno jedním dotazem
+# ═══════════════════════════════════════════════════════════════
+@router.get("/v1/board")
+def board(op: dict = Depends(operator)):
+    with db() as c:
+        state = c.execute("SELECT * FROM platform_state WHERE id = 1").fetchone()
+        counts = c.execute(
+            "SELECT state, count(*) AS n FROM task GROUP BY state").fetchall()
+        spend = c.execute(
+            """SELECT COALESCE(SUM(cost_czk),0) AS today FROM agent_run
+                WHERE created_at > date_trunc('day', now())""").fetchone()
+        month = c.execute(
+            """SELECT COALESCE(SUM(cost_czk),0) AS m FROM agent_run
+                WHERE created_at > date_trunc('month', now())""").fetchone()
+        pending = c.execute(
+            """SELECT d.*, t.title, p.code AS project FROM decision d
+               JOIN task t ON t.id = d.task_id
+               JOIN phase ph ON ph.id = t.phase_id JOIN project p ON p.id = ph.project_id
+               WHERE d.state = 'pending_human' ORDER BY d.created_at""").fetchall()
+        active = c.execute(
+            """SELECT t.title, p.code AS project, pr.display_name AS who,
+                      a.heartbeat_at, a.lease_expires_at
+               FROM assignment a
+               JOIN task t ON t.id = a.task_id
+               JOIN phase ph ON ph.id = t.phase_id JOIN project p ON p.id = ph.project_id
+               JOIN workstation w ON w.id = a.workstation_id
+               JOIN principal pr ON pr.id = w.principal_id
+               WHERE a.state = 'active'""").fetchall()
+        recent = c.execute(
+            """SELECT ts, subject_type, verb, payload FROM event
+               ORDER BY seq DESC LIMIT 25""").fetchall()
+    return {"platform": state, "task_counts": {r["state"]: r["n"] for r in counts},
+            "spend_today_czk": float(spend["today"]), "spend_month_czk": float(month["m"]),
+            "pending_decisions": pending, "active_work": active, "recent_events": recent}
+
+
+# ═══════════════════════════════════════════════════════════════
+#  Nastavení
+# ═══════════════════════════════════════════════════════════════
+class SettingsPatch(BaseModel):
+    values: dict[str, str]
+
+
+@router.get("/v1/settings")
+def settings_get(op: dict = Depends(operator)):
+    return cfg.as_form()
+
+
+@router.post("/v1/settings")
+def settings_set(body: SettingsPatch, op: dict = Depends(operator)):
+    changed = cfg.set_many(body.values, by=op.get("role", "panel"))
+
+    # Do ledgeru jde jen seznam klíčů, nikdy hodnoty — jsou mezi nimi hesla.
+    if changed:
+        with db() as c:
+            _emit(c, None, "platform", "settings", "updated",
+                  {"keys": sorted(changed)}, None)
+
+    warn = None
+    if "DASHBOARD_TOKEN" in changed:
+        warn = "Heslo do panelu změněno. Otevřené relace doběhnou, nové už chtějí nové heslo."
+    elif "ENROLL_PASSWORD" in changed:
+        warn = "Heslo pro připojení změněno. Rozešli lidem nové."
+
+    return {"ok": True, "changed": sorted(changed), "note": warn}

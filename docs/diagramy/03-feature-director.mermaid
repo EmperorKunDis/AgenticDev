@@ -1,0 +1,76 @@
+stateDiagram-v2
+    direction TB
+
+    state "INTAKE — načtení work orderu, parsování DoD" as INTAKE
+    state "PLAN — architect navrhne postup a rozpad" as PLAN
+    state "IMPLEMENT — implementer píše diff" as IMPL
+    state "TEST — tester spouští a doplňuje testy" as TEST
+    state "REVIEW — reviewer posuzuje diff" as REVIEW
+    state "SUBMIT — push, PR, artefakty, ledger" as SUBMIT
+    state "DECISION — pending_human, úkol blokován" as DECISION
+    state "ABORT — vyčerpán rozpočet nebo wall clock" as ABORT
+
+    state plan_gate <<choice>>
+    state test_gate <<choice>>
+    state review_gate <<choice>>
+    state human_gate <<choice>>
+
+    [*] --> INTAKE
+    INTAKE --> PLAN
+    INTAKE --> DECISION : DoD je nejednoznačné
+
+    PLAN --> plan_gate
+    plan_gate --> IMPL : plán v rámci rozpočtu
+    plan_gate --> DECISION : plán vyžaduje migraci schématu<br/>nebo novou závislost
+
+    IMPL --> TEST
+
+    TEST --> test_gate
+    test_gate --> REVIEW : testy zelené
+    test_gate --> IMPL : rework (max 5×)
+    test_gate --> DECISION : vyčerpáno 5 iterací
+
+    REVIEW --> review_gate
+    review_gate --> human_gate : bez blokujících nálezů
+    review_gate --> IMPL : rework (max 3×)
+    review_gate --> DECISION : vyčerpány 3 iterace
+
+    human_gate --> SUBMIT : risk_class = standard
+    human_gate --> DECISION : risk_class ≥ elevated
+
+    DECISION --> IMPL : schváleno, pokračuj
+    DECISION --> PLAN : schváleno se změnou plánu
+    DECISION --> [*] : zamítnuto, úkol vrácen
+
+    SUBMIT --> [*]
+
+    INTAKE --> ABORT
+    IMPL --> ABORT
+    TEST --> ABORT
+    REVIEW --> ABORT
+    ABORT --> [*]
+
+    note right of DECISION
+        Zapisuje se do ledgeru
+        jako řádek decision.
+        Po schválení se materializuje
+        jako ADR do prd/<projekt>/40-decisions/
+        a stává se precedentem
+        pro příští podobné úkoly.
+    end note
+
+    note right of ABORT
+        Strop drží HARNESS, ne director.
+        Director si nemůže přidat rozpočet.
+        Checkpoint zůstává na VPS —
+        úkol lze obnovit na jiné stanici.
+    end note
+
+    note left of IMPL
+        KAŽDÝ cyklus má
+        omezený počet iterací
+        a definovanou cestu
+        při vyčerpání.
+        Statická validace v CI
+        odmítne automat bez limitu.
+    end note

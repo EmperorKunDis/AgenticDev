@@ -1,0 +1,105 @@
+flowchart TB
+
+%% ══════════════════════════ VPS ══════════════════════════
+subgraph VPS["V P S   —   jediný zdroj pravdy"]
+direction TB
+
+  subgraph CP["CONTROL PLANE · L2 — řídicí vrstva"]
+  direction LR
+    WO["Work Order issuer<br/>vybírá podle<br/>projekt × fáze × druh úkolu"]
+    LED[("Ledger — Postgres + pgvector<br/>task · assignment · agent_run<br/>decision · event hash chain")]
+    DEC["Rozhodovací matice<br/>pending_human → ADR<br/>precedenty"]
+  end
+
+  subgraph DATA["DATA PLANE · L1"]
+  direction LR
+    GIT["Forgejo<br/>Git · PR · Actions"]
+    PRD["info / PRD<br/>markdown + pgvector<br/>glosář klienta"]
+    CHR["compose + harness<br/>OCI registry<br/>pinováno digestem"]
+    DIRS["directors<br/>podepsané balíčky<br/>canary / beta / stable"]
+    S3[("MinIO<br/>artefakty · transkripty")]
+  end
+
+  subgraph OPS["CI/CD + OBSERVABILITA · L4 / L5"]
+  direction LR
+    CI["gates · build · SBOM · cosign<br/>staging · preview env<br/>golden-task evaluace"]
+    OBS["Loki · Prometheus · Tempo<br/>Grafana · ntfy<br/>náklady na projekt"]
+  end
+end
+
+%% ══════════════════ SERVING DIRECTORS ══════════════════
+SERVE{{"S E R V I N G   D I R E C T O R S<br/>─────────────────────────────<br/>work order ed25519 · compose@ref · harness@digest<br/>director@verze + cosign · context bundle sha256<br/>krátkodobý JWT · lease + heartbeat"}}
+
+%% ══════════════════════ DEV POD ══════════════════════
+subgraph POD["Dev Pod — vývojář 1  (identicky vývojář 2 a 3)"]
+direction TB
+  LAU["launcher — na hostu<br/>jediná instalovaná věc"]
+  EGR["egress proxy<br/>allowlist domén z policy<br/>nabíhá jako první"]
+  HAR["H A R N E S S   —   TCB<br/>vynucuje: rozpočet · model allowlist<br/>egress · lease · tvrdý fail na tokenech<br/>OTLP · idempotentní write-back"]
+  DIRR["D I R E C T O R<br/>stavový automat úkolu<br/>brány · alokace rozpočtu · eskalace"]
+  WRK["workers<br/>architect · implementer<br/>tester · reviewer"]
+end
+
+POD2["Dev Pod — vývojář 2"]
+POD3["Dev Pod — vývojář 3"]
+
+LLM["cloud LLM API<br/>data_class ≤ confidential"]
+OLL["lokální Ollama<br/>data_class = restricted"]
+
+%% ─────────── servírování dolů ───────────
+WO   ==>|"work order"| SERVE
+PRD  ==>|"context bundle"| SERVE
+CHR  ==>|"compose + harness"| SERVE
+DIRS ==>|"director"| SERVE
+
+SERVE ==>|"PULL — nikdy push"| LAU
+SERVE ==> POD2
+SERVE ==> POD3
+
+%% ─────────── uvnitř podu ───────────
+LAU  -->|"1. compose up"| EGR
+LAU  -->|"2. spustí"| HAR
+HAR  -->|"ověří podpis<br/>+ requires_harness"| DIRR
+DIRR -->|"spouští z worker_pool"| WRK
+WRK  --> EGR
+EGR  --> LLM
+EGR  --> OLL
+
+%% ─────────── write-back nahoru ───────────
+HAR  -.->|"OTLP: logy · trace · tokeny · Kč"| OBS
+HAR  -.->|"checkpoint stavu<br/>události, dedupe key"| LED
+DIRR -.->|"push branch · PR"| GIT
+DIRR -.->|"artefakty · transkripty"| S3
+DIRR -.->|"eskalace"| DEC
+DEC  -.->|"schválení + rationale"| DIRR
+
+%% ─────────── pipeline staví sama sebe ───────────
+GIT --> CI
+CI  ==>|"staví harness image"| CHR
+CI  ==>|"evaluuje, podepisuje,<br/>promotuje director"| DIRS
+CI  -.-> OBS
+
+%% ══════════════════════ STYL ══════════════════════
+classDef navy   fill:#16294A,stroke:#0B1730,stroke-width:2px,color:#FFFFFF
+classDef steel  fill:#2E4A73,stroke:#16294A,stroke-width:2px,color:#FFFFFF
+classDef peach  fill:#F6B48A,stroke:#C97F4E,stroke-width:2px,color:#2A1A0E
+classDef green  fill:#8FBF6A,stroke:#5E8B3C,stroke-width:2px,color:#12240A
+classDef blue   fill:#5BB3D6,stroke:#2A7FA3,stroke-width:3px,color:#06202B
+classDef red    fill:#E06C6C,stroke:#A83A3A,stroke-width:2px,color:#2B0A0A
+classDef ghost  fill:#EFEBE6,stroke:#9A9088,stroke-width:1px,color:#3A342E,stroke-dasharray: 4 3
+classDef ext    fill:#FFFFFF,stroke:#9A9088,stroke-width:2px,color:#3A342E
+
+class WO,LED navy
+class GIT,CHR,DIRS,S3,CI,OBS steel
+class PRD green
+class SERVE blue
+class DEC red
+class LAU,HAR,DIRR,WRK,EGR peach
+class POD2,POD3 ghost
+class LLM,OLL ext
+
+style VPS fill:#FAF8F5,stroke:#16294A,stroke-width:4px
+style POD fill:#FFF6EE,stroke:#C97F4E,stroke-width:3px
+style CP fill:#F0EEF5,stroke:#16294A,stroke-width:2px
+style DATA fill:#F0F3F7,stroke:#2E4A73,stroke-width:2px
+style OPS fill:#F2F1EE,stroke:#2E4A73,stroke-width:2px

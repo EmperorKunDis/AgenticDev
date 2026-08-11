@@ -1,0 +1,202 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="robots" content="noindex, nofollow">
+<title>Praut — připojení stroje</title>
+<link rel="icon" href="/favicon.ico">
+<style>
+  :root{
+    --bg:#0f1115; --panel:#171a21; --line:#252932;
+    --ink:#e8eaed; --dim:#8b909b; --accent:#3B4EF0; --accent2:#55178C;
+    --accent-soft:#6b7bff;
+    --ok:#3fb950; --err:#f85149;
+  }
+  *{box-sizing:border-box}
+  body{
+    margin:0; min-height:100vh; display:grid; place-items:center;
+    background:var(--bg); color:var(--ink); padding:24px;
+    font:15px/1.6 ui-sans-serif,-apple-system,"Segoe UI",Roboto,sans-serif;
+  }
+  .card{
+    width:100%; max-width:520px; background:var(--panel);
+    border:1px solid var(--line); border-radius:14px; padding:32px;
+  }
+  .logo{height:34px; margin-bottom:22px; display:block}
+  .logo img{height:34px; width:auto; display:block}
+  h1{margin:0 0 6px; font-size:21px; letter-spacing:-.3px}
+  .sub{color:var(--dim); margin:0 0 26px; font-size:14px}
+  label{display:block; font-size:13px; color:var(--dim); margin-bottom:7px}
+  input{
+    width:100%; padding:12px 14px; border-radius:9px; font-size:15px;
+    background:#0d0f13; border:1px solid var(--line); color:var(--ink);
+    font-family:inherit;
+  }
+  input:focus{outline:none; border-color:var(--accent-soft)}
+  button{
+    width:100%; margin-top:16px; padding:12px; border:0; border-radius:9px;
+    background:linear-gradient(135deg,var(--accent),var(--accent2));
+    color:#fff; font-weight:600; font-size:15px;
+    cursor:pointer; font-family:inherit;
+  }
+  button:hover{filter:brightness(1.1)}
+  button:disabled{opacity:.5; cursor:not-allowed}
+  .msg{margin-top:14px; font-size:14px; display:none}
+  .msg.err{color:var(--err); display:block}
+  .step{
+    display:none; border-top:1px solid var(--line);
+    margin-top:26px; padding-top:22px;
+  }
+  .step.on{display:block}
+  .step h2{font-size:14px; margin:0 0 4px; color:var(--accent-soft)}
+  .step p{color:var(--dim); font-size:13.5px; margin:0 0 12px}
+  pre{
+    background:#0d0f13; border:1px solid var(--line); border-radius:9px;
+    padding:13px; overflow-x:auto; margin:0 0 10px;
+    font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#c9d1d9; white-space:pre-wrap; word-break:break-all;
+  }
+  .copy{
+    background:transparent; border:1px solid var(--line); color:var(--dim);
+    width:auto; padding:6px 12px; font-size:12.5px; margin:0;
+  }
+  .copy:hover{color:var(--ink); filter:none}
+  .os{display:flex; gap:8px; margin-bottom:16px}
+  .os button{
+    flex:1; margin:0; padding:9px; font-size:13.5px; background:transparent;
+    border:1px solid var(--line); color:var(--dim); font-weight:500;
+  }
+  .os button.on{border-color:var(--accent-soft); color:var(--ink); background:#1b2130}
+  .foot{
+    margin-top:26px; padding-top:18px; border-top:1px solid var(--line);
+    color:var(--dim); font-size:12.5px;
+  }
+  code{background:#0d0f13; padding:1px 5px; border-radius:4px; font-size:12.5px}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo" id="logo"><img src="/logo.svg" alt="Praut" onerror="this.parentNode.textContent='PRAUT'"></div>
+  <h1>Připojení stroje</h1>
+  <p class="sub">Zadej heslo, které ti dal správce. Pak dostaneš dva příkazy.</p>
+
+  <div id="gate">
+    <label for="pw">Heslo</label>
+    <input id="pw" type="password" autocomplete="current-password"
+           autocapitalize="off" spellcheck="false" placeholder="••••••••••••">
+    <button id="go">Pokračovat</button>
+    <div class="msg" id="err"></div>
+  </div>
+
+  <div class="step" id="result">
+    <div class="os">
+      <button data-os="mac" class="on">macOS</button>
+      <button data-os="linux">Linux</button>
+      <button data-os="win">Windows</button>
+    </div>
+
+    <h2>1 — Připoj se do sítě</h2>
+    <p id="net-hint">Nainstaluj Tailscale a přihlas se tímhle klíčem.</p>
+    <pre id="cmd1">—</pre>
+    <button class="copy" data-for="cmd1">Zkopírovat</button>
+
+    <h2 style="margin-top:24px">2 — Nainstaluj Praut</h2>
+    <p>Stáhne instalátor a spustí ho. Ověří si, že mluví se správným serverem.</p>
+    <pre id="cmd2">—</pre>
+    <button class="copy" data-for="cmd2">Zkopírovat</button>
+
+    <div class="foot">
+      Po instalaci najdeš na ploše ikonu <strong>Praut</strong>. Klikni na ni
+      a rovnou se dostaneš k agentovi.
+      <br><br>
+      Instance <code id="iid">—</code>
+    </div>
+  </div>
+</div>
+
+<script>
+const $ = s => document.querySelector(s);
+let DATA = null, PW = '', OS = 'mac';
+
+const ORIGIN = location.origin;
+
+function cmds() {
+  if (!DATA) return ['—', '—'];
+  const k = DATA.tailscale_authkey;
+  let net, inst;
+
+  if (OS === 'mac') {
+    net = k ? `brew install --cask tailscale\nsudo tailscale up --authkey ${k}`
+            : `# Nainstaluj Tailscale z https://tailscale.com/download/mac\n# a přihlas se do sítě správce.`;
+    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}"}' -o praut-install.sh \\\n  && bash praut-install.sh`;
+  } else if (OS === 'linux') {
+    net = k ? `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up --authkey ${k}`
+            : `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up`;
+    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o praut-install.sh \\\n  && bash praut-install.sh '${PW}'`;
+  } else {
+    net = k ? `winget install --id tailscale.tailscale\ntailscale up --authkey ${k}`
+            : `winget install --id tailscale.tailscale\ntailscale up`;
+    inst = `# PowerShell jako správce:\nirm ${ORIGIN}/install-windows.ps1 -OutFile praut-install.ps1\npowershell -ExecutionPolicy Bypass -File praut-install.ps1 -Token '${PW}'`;
+  }
+  return [net, inst];
+}
+
+function render() {
+  const [a, b] = cmds();
+  $('#cmd1').textContent = a;
+  $('#cmd2').textContent = b;
+  $('#net-hint').textContent = DATA && DATA.tailscale_authkey
+    ? 'Nainstaluj Tailscale a přihlas se tímhle klíčem. Platí hodinu.'
+    : 'Nainstaluj Tailscale a přihlas se do sítě správce.';
+}
+
+async function go() {
+  const pw = $('#pw').value.trim();
+  if (!pw) return;
+  $('#go').disabled = true;
+  $('#err').className = 'msg';
+
+  try {
+    const r = await fetch('/v1/join', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ password: pw })
+    });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) throw new Error(j.detail || 'nepodařilo se');
+
+    DATA = j; PW = pw;
+    $('#iid').textContent = (j.instance_id || '').slice(0, 8) || '—';
+    $('#gate').style.display = 'none';
+    $('#result').classList.add('on');
+    render();
+  } catch (e) {
+    $('#err').textContent = e.message;
+    $('#err').className = 'msg err';
+    $('#go').disabled = false;
+  }
+}
+
+$('#go').onclick = go;
+$('#pw').onkeydown = e => { if (e.key === 'Enter') go(); };
+
+document.querySelectorAll('.os button').forEach(b => {
+  b.onclick = () => {
+    document.querySelectorAll('.os button').forEach(x => x.classList.remove('on'));
+    b.classList.add('on');
+    OS = b.dataset.os;
+    render();
+  };
+});
+
+document.querySelectorAll('.copy').forEach(b => {
+  b.onclick = async () => {
+    await navigator.clipboard.writeText($('#' + b.dataset.for).textContent);
+    const t = b.textContent; b.textContent = 'Zkopírováno';
+    setTimeout(() => b.textContent = t, 1400);
+  };
+});
+</script>
+</body>
+</html>
