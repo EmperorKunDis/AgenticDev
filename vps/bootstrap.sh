@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  Praut Platform — bootstrap čerstvého VPS
+#  AgenticDev — bootstrap čerstvého VPS
 #  Debian 12 / Ubuntu 24.04, spouštěj jako root
 #  Idempotentní: můžeš pustit opakovaně
 # ═══════════════════════════════════════════════════════════════
@@ -64,7 +64,7 @@ sysctl -w net.ipv4.ip_forward=1 >/dev/null
 
 # ─── 5. SSH hardening ──────────────────────────────────────────
 log "SSH hardening"
-cat > /etc/ssh/sshd_config.d/99-praut.conf <<'SSHEOF'
+cat > /etc/ssh/sshd_config.d/99-agenticdev.conf <<'SSHEOF'
 PasswordAuthentication no
 PermitRootLogin prohibit-password
 KbdInteractiveAuthentication no
@@ -81,24 +81,24 @@ AUEOF
 
 # ─── 7. Adresáře ───────────────────────────────────────────────
 log "Adresářová struktura"
-install -d -m 0750 /srv/praut/{data,config,backup}
-install -d -m 0750 /srv/praut/data/{postgres,forgejo,minio,caddy,directors}
+install -d -m 0750 /srv/agenticdev/{data,config,backup}
+install -d -m 0750 /srv/agenticdev/data/{postgres,forgejo,minio,caddy,directors}
 
 # ─── 8. Zálohy ─────────────────────────────────────────────────
 log "Instalace zálohovacího systemd timeru"
-install -m 0700 "$(dirname "$0")/backup/restic-backup.sh" /usr/local/bin/praut-backup
-cat > /etc/systemd/system/praut-backup.service <<'SVCEOF'
+install -m 0700 "$(dirname "$0")/backup/restic-backup.sh" /usr/local/bin/agenticdev-backup
+cat > /etc/systemd/system/agenticdev-backup.service <<'SVCEOF'
 [Unit]
-Description=Praut Platform záloha (restic)
+Description=AgenticDev záloha (restic)
 After=network-online.target
 [Service]
 Type=oneshot
-EnvironmentFile=/srv/praut/config/.env
-ExecStart=/usr/local/bin/praut-backup
+EnvironmentFile=/srv/agenticdev/config/.env
+ExecStart=/usr/local/bin/agenticdev-backup
 SVCEOF
-cat > /etc/systemd/system/praut-backup.timer <<'TMREOF'
+cat > /etc/systemd/system/agenticdev-backup.timer <<'TMREOF'
 [Unit]
-Description=Denní záloha Praut Platform
+Description=Denní záloha AgenticDev
 [Timer]
 OnCalendar=*-*-* 02:30:00
 Persistent=true
@@ -107,15 +107,15 @@ RandomizedDelaySec=15m
 WantedBy=timers.target
 TMREOF
 systemctl daemon-reload
-systemctl enable praut-backup.timer >/dev/null
+systemctl enable agenticdev-backup.timer >/dev/null
 
 log "Hotovo."
 cat <<'NEXTEOF'
 
   Další kroky:
     1) tailscale up --ssh
-    2) zkopíruj .env do /srv/praut/config/.env
-    3) cd /srv/praut && docker compose up -d
+    2) zkopíruj .env do /srv/agenticdev/config/.env
+    3) cd /srv/agenticdev && docker compose up -d
     4) make -C <repo> smoke
 
   Ověř, že Postgres a MinIO NEJSOU dostupné z veřejné IP:

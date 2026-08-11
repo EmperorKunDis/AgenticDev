@@ -4,7 +4,7 @@
 #     tools/set-provider.sh codex|openai|openrouter|ollama|codex-cli|anthropic
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
-ENV=/srv/praut/config/.env
+ENV=/srv/agenticdev/config/.env
 [[ -f $ENV ]] || { echo "✗ $ENV neexistuje"; exit 1; }
 
 set_kv() {
@@ -56,5 +56,5 @@ case "${1:-}" in
     ;;
 esac
 
-cd /srv/praut/src/vps && docker compose --env-file "$ENV" up -d control-plane >/dev/null 2>&1 || true
+cd /srv/agenticdev/src/vps && docker compose --env-file "$ENV" up -d control-plane >/dev/null 2>&1 || true
 echo "✓ hotovo"

@@ -1,12 +1,12 @@
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Praut
+Name=AgenticDev
 GenericName=Agentic development
 Comment=Otevře agenta a výběr projektu
-Exec=praut-launch
-Icon=praut
+Exec=agenticdev-launch
+Icon=agenticdev
 Terminal=false
 Categories=Development;IDE;
 StartupNotify=true
-Keywords=praut;agent;development;
+Keywords=agenticdev;agent;development;

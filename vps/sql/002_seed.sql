@@ -1,13 +1,13 @@
 -- Seed: jeden projekt, jedna fáze, jeden úkol, jedna stanice.
 -- Cíl: hned po startu máš co pustit skrz pipeline.
-\c praut
+\c agenticdev
 
-INSERT INTO client (name, ico) VALUES ('Praut interní', NULL);
+INSERT INTO client (name, ico) VALUES ('AgenticDev interní', NULL);
 
 INSERT INTO project (client_id, code, repo_url, data_class, model_allowlist)
-SELECT id, 'sandbox', 'ssh://git@vps:2222/praut/sandbox.git', 'internal',
+SELECT id, 'sandbox', 'ssh://git@vps:2222/agenticdev/sandbox.git', 'internal',
        ARRAY['claude-sonnet-4-6','local/qwen2.5-coder:32b']
-FROM client WHERE name = 'Praut interní';
+FROM client WHERE name = 'AgenticDev interní';
 
 INSERT INTO phase (project_id, kind, order_idx, active)
 SELECT id, 'implementation', 3, true FROM project WHERE code = 'sandbox';

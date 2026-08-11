@@ -1,0 +1,83 @@
+# Web / Landing page
+
+Jedna statická stránka, dvojjazyčně, nasazuje se na GitHub Pages.
+Žádný build, žádné závislosti — `index.html` a čtyři obrázky.
+
+---
+
+## Než to nasadíš
+
+### 1. Formulář
+
+V `index.html` je `action="https://formspree.io/f/DOPLN_FORM_ID"`.
+Nasazovací workflow **schválně spadne**, dokud to nedoplníš — sbírat
+adresy do prázdna je horší než formulář nemít.
+
+Založ si formulář na [formspree.io](https://formspree.io) (zdarma 50
+odeslání za měsíc), zkopíruj ID a nahraď ho:
+
+```bash
+sed -i '' 's|DOPLN_FORM_ID|tvoje-id|' site/index.html
+```
+
+Alternativy, kdyby ti Formspree nesedělo: [Tally](https://tally.so),
+[Buttondown](https://buttondown.com) (dělaný na newslettery, zdarma do
+100 adres), [Formcarry](https://formcarry.com).
+
+### 2. Doména
+
+V `CNAME` je `agenticdev.praut.cz`. Změň, pokud chceš jinou.
+
+U svého DNS poskytovatele přidej záznam:
+
+```
+Typ    CNAME
+Jméno  agenticdev
+Cíl    agenticdev-startup-support.github.io.
+TTL    3600
+```
+
+Tečka na konci cíle tam patří.
+
+### 3. Zapni Pages
+
+Settings → Pages → **Source: GitHub Actions**. Ne „Deploy from a branch" —
+web se nasazuje workflow z `site/`.
+
+Až se doména propíše, zaškrtni tam **Enforce HTTPS**. Certifikát vydá
+GitHub sám, ale trvá to řádově desítky minut po přidání DNS záznamu.
+
+---
+
+## Jak se to nasazuje
+
+Push do `main`, který se dotkne `site/**`, spustí workflow `pages`.
+Ručně jde pustit z Actions → pages → Run workflow.
+
+---
+
+## Co je uvnitř
+
+| | |
+|---|---|
+| `index.html` | celá stránka, včetně stylů i skriptu |
+| `logo.svg` | wordmark v hlavičce |
+| `agenticdev.ico` | favicon |
+| `og.png` | náhled pro sdílení na sítích |
+| `CNAME` | doména |
+
+Jazyk se přepíná v prohlížeči přes `localStorage`, výchozí se hádá z
+nastavení prohlížeče. Bez JavaScriptu se zobrazí česká verze.
+
+---
+
+## Osobní údaje
+
+Formulář má povinné zaškrtávátko se souhlasem, uvedený jediný účel a
+adresu pro odvolání. To je minimum, ne komplet — až budeš adresy
+skutečně používat, hodí se k tomu mít i informační sdělení podle GDPR
+a někde zapsané, kdy kdo souhlas dal.
+
+Formspree ty adresy drží u sebe, takže je to zpracovatel — na to se
+váže zpracovatelská smlouva. Mají ji jako součást podmínek, ale je dobré
+si to přečíst, než tam padne první adresa.

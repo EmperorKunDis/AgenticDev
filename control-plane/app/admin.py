@@ -22,7 +22,7 @@ DASHBOARD_TOKEN = os.environ.get("DASHBOARD_TOKEN", "")
 FORGEJO_URL     = os.environ.get("FORGEJO_URL", "http://forgejo:3000")
 FORGEJO_TOKEN   = os.environ.get("FORGEJO_TOKEN", "")
 GIT_SSH         = os.environ.get("GIT_SSH_BASE", "ssh://git@vps:2222")
-HARNESS_IMAGE   = os.environ.get("HARNESS_IMAGE", "praut/harness:dev")
+HARNESS_IMAGE   = os.environ.get("HARNESS_IMAGE", "agenticdev/harness:dev")
 
 PHASES = ["discovery", "design", "implementation", "hardening", "delivery", "support"]
 
@@ -43,16 +43,16 @@ def dashboard_login(body: Login, response: Response):
     tok = jwt.encode(
         {"role": "operator", "exp": now() + timedelta(days=30)},
         JWT_SECRET, algorithm="HS256")
-    response.set_cookie("praut_session", tok, httponly=True,
+    response.set_cookie("agenticdev_session", tok, httponly=True,
                         samesite="lax", max_age=30 * 24 * 3600)
     return {"ok": True}
 
 
-def operator(praut_session: str | None = Cookie(default=None)) -> dict:
-    if not praut_session:
+def operator(agenticdev_session: str | None = Cookie(default=None)) -> dict:
+    if not agenticdev_session:
         raise HTTPException(401, "nepřihlášeno")
     try:
-        return jwt.decode(praut_session, JWT_SECRET, algorithms=["HS256"])
+        return jwt.decode(agenticdev_session, JWT_SECRET, algorithms=["HS256"])
     except jwt.PyJWTError:
         raise HTTPException(401, "relace vypršela")
 
@@ -95,7 +95,7 @@ def register_ws(b: Register):
     return {"workstation_id": ws["id"], "channel": ws["channel"],
             "git_ready": git_ok,
             "git_ssh": GIT_SSH,
-            "dashboard": os.environ.get("PRAUT_DOMAIN", "")}
+            "dashboard": os.environ.get("AGENTICDEV_DOMAIN", "")}
 
 
 def _forgejo_add_key(display_name: str, email: str | None,
@@ -112,11 +112,11 @@ def _forgejo_add_key(display_name: str, email: str | None,
         r = httpx.get(f"{FORGEJO_URL}/api/v1/users/{login}", headers=h, timeout=15)
         if r.status_code == 404:
             httpx.post(f"{FORGEJO_URL}/api/v1/admin/users", headers=h, timeout=20,
-                       json={"username": login, "email": email or f"{login}@praut.local",
+                       json={"username": login, "email": email or f"{login}@agenticdev.local",
                              "password": secrets.token_urlsafe(24),
                              "must_change_password": False})
         r = httpx.post(f"{FORGEJO_URL}/api/v1/admin/users/{login}/keys", headers=h, timeout=20,
-                       json={"title": f"praut-{hostname}", "key": pubkey.strip()})
+                       json={"title": f"agenticdev-{hostname}", "key": pubkey.strip()})
         return r.status_code in (201, 422)          # 422 = klíč už tam je
     except Exception:
         return False
@@ -151,11 +151,11 @@ def _forgejo_create_repo(code: str) -> str | None:
                        headers={"Authorization": f"token {FORGEJO_TOKEN}"},
                        json={"name": code, "private": True, "auto_init": True,
                              "default_branch": "main",
-                             "description": f"Praut projekt {code}"},
+                             "description": f"AgenticDev projekt {code}"},
                        timeout=30)
         if r.status_code in (201, 409):
-            return f"{GIT_SSH}/{r.json().get('owner', {}).get('login', 'praut')}/{code}.git" \
-                   if r.status_code == 201 else f"{GIT_SSH}/praut/{code}.git"
+            return f"{GIT_SSH}/{r.json().get('owner', {}).get('login', 'agenticdev')}/{code}.git" \
+                   if r.status_code == 201 else f"{GIT_SSH}/agenticdev/{code}.git"
     except Exception:
         pass
     return None
@@ -172,13 +172,13 @@ def _forgejo_migrate(code: str, url: str) -> str | None:
                              "private": True, "mirror": False, "service": "git"},
                        timeout=300)
         if r.status_code in (201, 409):
-            return f"{GIT_SSH}/praut/{code}.git"
+            return f"{GIT_SSH}/agenticdev/{code}.git"
     except Exception:
         pass
     return None
 
 
-def _forgejo_seed_prd(code: str, owner: str = "praut") -> None:
+def _forgejo_seed_prd(code: str, owner: str = "agenticdev") -> None:
     if not FORGEJO_TOKEN:
         return
     import base64 as b64
@@ -199,9 +199,9 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
     code = p.code.strip().lower().replace(" ", "-")
 
     if p.import_url:
-        repo = _forgejo_migrate(code, p.import_url) or f"{GIT_SSH}/praut/{code}.git"
+        repo = _forgejo_migrate(code, p.import_url) or f"{GIT_SSH}/agenticdev/{code}.git"
     else:
-        repo = _forgejo_create_repo(code) or f"{GIT_SSH}/praut/{code}.git"
+        repo = _forgejo_create_repo(code) or f"{GIT_SSH}/agenticdev/{code}.git"
         _forgejo_seed_prd(code)
 
     with db() as c:

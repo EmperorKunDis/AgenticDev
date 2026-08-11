@@ -1,4 +1,4 @@
-# Praut — konfigurace Ghostty
+# AgenticDev — konfigurace Ghostty
 # Instaluje se do ~/.config/ghostty/config, existující se zálohuje.
 
 font-family = "JetBrains Mono"

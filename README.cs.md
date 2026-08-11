@@ -1,19 +1,19 @@
-# Praut Platform
+# AgenticDev
 
-**Vlastní agentní vývojová platforma.** VPS drží všechna data, kontext a
-orchestraci. Vývojáři spouštějí agenta na svém stroji nad checkoutem
-projektu, ale instrukce, scope a fázi dodává server — a rozhodnutí, běhy i
-náklady se zapisují zpátky do auditovatelného ledgeru.
+**Vlastní agentní vývojová platforma.** Server drží všechna data, kontext a
+orchestraci. Na stroji vývojáře běží agent v izolovaném kontejneru — bez
+cesty do internetu, ven jen přes proxy s allowlistem. Repozitář je připojený
+read-only a zapisovatelné jsou jen cesty povolené pro danou fázi, takže
+zápis jinam selže na úrovni jádra.
 
-Agent běží v kontejneru bez cesty do internetu — ven se dostane jen přes
-proxy s allowlistem. Repozitář je připojený read-only a zapisovatelné jsou
-jen cesty ze scope, takže zápis jinam selže na úrovni jádra.
+Instrukce, scope i fázi dodává server. Rozhodnutí, běhy a náklady se
+zapisují zpátky do auditovatelné evidence.
 
 🇬🇧 [English version of this document](README.md)
 
-> **Stav: alfa.** Běží v ostrém provozu v jedné firmě. Než to nasadíš,
-> přečti si [Známá omezení](#známá-omezení) na konci. Radši ti to řekneme,
-> než abys na to přišel sám.
+> **Stav: alfa.** Sandbox ani klienti pro Windows a Linux nebyli zatím
+> odzkoušeni v ostrém provozu. Než to nasadíš, přečti si
+> [Známá omezení](#známá-omezení) na konci.
 
 ---
 
@@ -46,12 +46,12 @@ Stáhni soubor, ověř součet, spusť. Nepouštěj ho přes rouru — instalát
 schválně odmítá.
 
 ```bash
-curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/praut-install-vps.sh
-curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/praut-install-vps.sh.sha256
-sha256sum -c praut-install-vps.sh.sha256
+curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/agenticdev-install-vps.sh
+curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/agenticdev-install-vps.sh.sha256
+sha256sum -c agenticdev-install-vps.sh.sha256
 
-scp praut-install-vps.sh root@tvuj-server:/root/
-ssh root@tvuj-server 'bash /root/praut-install-vps.sh'
+scp agenticdev-install-vps.sh root@tvuj-server:/root/
+ssh root@tvuj-server 'bash /root/agenticdev-install-vps.sh'
 ```
 
 Zeptá se na pět věcí včetně dvou hesel, zbytek udělá sám. Na konci vypíše
@@ -70,7 +70,7 @@ dva příkazy ke zkopírování.
 **macOS · Linux · Windows.** Windows jede přes WSL2.
 
 Instalátor stroj zaregistruje pod jménem a e-mailem toho člověka, nahraje
-mu SSH klíč do Forgeja a položí na plochu **ikonu Praut**. Klik na ni
+mu SSH klíč do Forgeja a položí na plochu **ikonu AgenticDev**. Klik na ni
 otevře agenta a výběr projektu.
 
 Objeví se v panelu v záložce *tým*, kde jde každý stroj zvlášť odpojit.
@@ -86,14 +86,14 @@ Všechno ostatní — panel, git, API — zůstává na tailnetu.
 
 Dodavatel modelů a API klíč, allowlist domén, obě hesla, platnost lease,
 Tailscale klíče a SMTP se mění přímo v panelu a platí okamžitě. Věci, které
-potřebují restart kontejneru, žijí v `/srv/praut/config/.env` a panel je
+potřebují restart kontejneru, žijí v `/srv/agenticdev/config/.env` a panel je
 ukazuje jen ke čtení.
 
 ---
 
 ## Denní práce
 
-**Klikneš na Praut v Docku.** Otevře se Ghostty, vybereš projekt
+**Klikneš na AgenticDev v Docku.** Otevře se Ghostty, vybereš projekt
 šipkami (nebo filtruješ psaním), a jsi v Pi. Normální konverzace.
 
 ```
@@ -102,21 +102,21 @@ ukazuje jen ke čtení.
   schekonom   SCH-EKONOM s.r.o.   discovery        0 úkolů
 ```
 
-Z terminálu totéž: `praut work`
+Z terminálu totéž: `agenticdev work`, nebo zkráceně `adev work`.
 
 ### Víc projektů zároveň
 
 Každý projekt = jedno okno. Nic nevypínáš.
 
 ```bash
-praut work montexbau      # okno 1
-praut work schekonom      # okno 2 (⌘T v Ghostty)
+agenticdev work montexbau      # okno 1
+agenticdev work schekonom      # okno 2 (⌘T v Ghostty)
 ```
 
 ### Jiná fáze, aniž bys ji měnil týmu
 
 ```bash
-praut work montexbau --phase delivery
+agenticdev work montexbau --phase delivery
 ```
 
 Projekt zůstane pro ostatní v implementation. Změna fáze v nástěnce
@@ -126,11 +126,11 @@ a běžící session jede dál.
 ### Přepínání mezi úkoly
 
 ```bash
-praut-git list
-cd "$(praut-git switch zaokrouhleni)"
+agenticdev-git list
+cd "$(agenticdev-git switch zaokrouhleni)"
 ```
 
-Rozdělané úkoly leží fyzicky vedle sebe v `~/Praut/.praut-trees/`.
+Rozdělané úkoly leží fyzicky vedle sebe v `~/AgenticDev/.agenticdev-trees/`.
 
 ---
 
@@ -153,19 +153,19 @@ projektu.
 
 ## Git
 
-`bin/praut-git` — deterministický shell, nula tokenů. Agent i člověk
+`bin/agenticdev-git` — deterministický shell, nula tokenů. Agent i člověk
 volají to samé. Pi ho volá automaticky po každých třech editacích
 a na konci session.
 
 ```bash
-cd "$(praut-git start "Import karet z DE" T-042)"
-praut-git checkpoint "kostra"
-praut-git save feat import "mapování polí"
-praut-git finish "feat(import): karty z DE"
+cd "$(agenticdev-git start "Import karet z DE" T-042)"
+agenticdev-git checkpoint "kostra"
+agenticdev-git save feat import "mapování polí"
+agenticdev-git finish "feat(import): karty z DE"
 ```
 
 Worktree na úkol · checkpointy se při `finish` sesypou do jednoho
-commitu · `git notes` drží ID session, takže `praut-git who src/a.ts 42`
+commitu · `git notes` drží ID session, takže `agenticdev-git who src/a.ts 42`
 řekne, odkud ten řádek je.
 
 Test: `make test-git`
@@ -186,7 +186,7 @@ Test: `make test-git`
 
 ## Přizpůsobení
 
-`/srv/praut/src/workspace/`:
+`/srv/agenticdev/src/workspace/`:
 
 ```
 _base/          AGENTS.md, .pi/ (skills, extension), bin/
@@ -201,13 +201,13 @@ _phase/<fáze>/  scope + doplněk AGENTS.md
 
 ## Co ověřit
 
-- **`.pi/extensions/praut-git.ts`** je psaný podle dokumentace Pi,
+- **`.pi/extensions/agenticdev-git.ts`** je psaný podle dokumentace Pi,
   ne odzkoušený proti běžícímu Pi. Ověř `api.addTool`, `api.addCommand`
-  a názvy událostí. `bin/praut-git` na extension nezávisí.
+  a názvy událostí. `bin/agenticdev-git` na extension nezávisí.
 - Pi se ptá na důvěru k projektové složce — nastav `defaultProjectTrust`.
 - **Dva lidi můžou vzít stejný úkol.** Zámky nejsou. Při třech lidech
   to vyřešíte tím, že si to řeknete.
-- Zálohy: doplň `RESTIC_REPOSITORY` do `/srv/praut/config/.env`.
+- Zálohy: doplň `RESTIC_REPOSITORY` do `/srv/agenticdev/config/.env`.
 - CI/CD ve Forgejo Actions není napsané.
 
 
@@ -234,8 +234,6 @@ Komerční licence: **svanda@praut.cz**
 
 Poctivý stav. Vedeno jako blokátory verze 1.0:
 
-- **Directors se nepodepisují.** Harness ověřuje podpis, který zatím nikdo
-  nevydává. Nespouštěj pody na strojích, které nemáš pod kontrolou.
 - **Není serverová brána před mergem.** Agent si pouští vlastní testy ve
   vlastním podu. Pro malý důvěryhodný tým stačí, jinak ne.
 - **Chybí observabilita.** Grafana a Loki jsou v compose zakomentované,
@@ -244,11 +242,20 @@ Poctivý stav. Vedeno jako blokátory verze 1.0:
 - **Počítání tokenů je odhad** (`len/3`) a ceny v `PRICING` nejsou ověřené.
   Útrata v nástěnce je orientační.
 - **CI není napsané.** Forgejo Actions je zapnuté, workflow chybí.
+- **Orchestrační vrstva (directors) neexistuje.** Architektonický rozbor ji
+  popisuje, v kódu není. Agent pracuje bez stavového automatu.
 - **Útěk z kontejneru je mimo rozsah.** Pod běží bez rootu, se zahozenými
   capabilities a bez Docker socketu — ale kontejner není hypervizor. Ber to
   jako pevný plot, ne jako trezor.
 
 Bezpečnostní dopady najdeš v [SECURITY.md](SECURITY.md).
+
+---
+
+## Web
+
+Jednostránkový web je v [`site/`](site/) a nasazuje se na GitHub Pages.
+Co doplnit před spuštěním, je v [site/README.md](site/README.md).
 
 ---
 

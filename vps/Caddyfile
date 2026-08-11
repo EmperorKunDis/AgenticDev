@@ -3,7 +3,7 @@
 	email {$SMTP_FROM}
 }
 
-{$PRAUT_DOMAIN} {
+{$AGENTICDEV_DOMAIN} {
 	# Tailnet doména nemá veřejný DNS záznam — Let's Encrypt ji nikdy
 	# neověří. Certifikát vydá sám Tailscale přes tailscaled.sock.
 	tls {

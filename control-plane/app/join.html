@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <meta name="robots" content="noindex, nofollow">
-<title>Praut — připojení stroje</title>
+<title>AgenticDev — připojení stroje</title>
 <link rel="icon" href="/favicon.ico">
 <style>
   :root{
@@ -77,7 +77,7 @@
 </head>
 <body>
 <div class="card">
-  <div class="logo" id="logo"><img src="/logo.svg" alt="Praut" onerror="this.parentNode.textContent='PRAUT'"></div>
+  <div class="logo" id="logo"><img src="/logo.svg" alt="AgenticDev" onerror="this.parentNode.textContent='AGENTICDEV'"></div>
   <h1>Připojení stroje</h1>
   <p class="sub">Zadej heslo, které ti dal správce. Pak dostaneš dva příkazy.</p>
 
@@ -101,13 +101,13 @@
     <pre id="cmd1">—</pre>
     <button class="copy" data-for="cmd1">Zkopírovat</button>
 
-    <h2 style="margin-top:24px">2 — Nainstaluj Praut</h2>
+    <h2 style="margin-top:24px">2 — Nainstaluj AgenticDev</h2>
     <p>Stáhne instalátor a spustí ho. Ověří si, že mluví se správným serverem.</p>
     <pre id="cmd2">—</pre>
     <button class="copy" data-for="cmd2">Zkopírovat</button>
 
     <div class="foot">
-      Po instalaci najdeš na ploše ikonu <strong>Praut</strong>. Klikni na ni
+      Po instalaci najdeš na ploše ikonu <strong>AgenticDev</strong>. Klikni na ni
       a rovnou se dostaneš k agentovi.
       <br><br>
       Instance <code id="iid">—</code>
@@ -129,15 +129,15 @@ function cmds() {
   if (OS === 'mac') {
     net = k ? `brew install --cask tailscale\nsudo tailscale up --authkey ${k}`
             : `# Nainstaluj Tailscale z https://tailscale.com/download/mac\n# a přihlas se do sítě správce.`;
-    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}"}' -o praut-install.sh \\\n  && bash praut-install.sh`;
+    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh`;
   } else if (OS === 'linux') {
     net = k ? `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up --authkey ${k}`
             : `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up`;
-    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o praut-install.sh \\\n  && bash praut-install.sh '${PW}'`;
+    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh '${PW}'`;
   } else {
     net = k ? `winget install --id tailscale.tailscale\ntailscale up --authkey ${k}`
             : `winget install --id tailscale.tailscale\ntailscale up`;
-    inst = `# PowerShell jako správce:\nirm ${ORIGIN}/install-windows.ps1 -OutFile praut-install.ps1\npowershell -ExecutionPolicy Bypass -File praut-install.ps1 -Token '${PW}'`;
+    inst = `# PowerShell jako správce:\nirm ${ORIGIN}/install-windows.ps1 -OutFile agenticdev-install.ps1\npowershell -ExecutionPolicy Bypass -File agenticdev-install.ps1 -Token '${PW}'`;
   }
   return [net, inst];
 }

@@ -1,4 +1,4 @@
-# Praut Platform
+# AgenticDev
 
 **Self-hosted agentic development platform.** One VPS holds all data,
 context, and orchestration. Developers run the agent on their own machine
@@ -8,16 +8,16 @@ ledger.
 
 🇨🇿 [Česká verze tohoto dokumentu](README.cs.md)
 
-> **Status: alpha.** Running in production at one company. Read
-> [Known limitations](#known-limitations) before you deploy this. We would
-> rather you know what is missing than discover it yourself.
+> **Status: alpha.** The sandbox and the Windows and Linux clients have not
+> yet been exercised in production. Read
+> [Known limitations](#known-limitations) before you deploy this.
 
 ---
 
 ## What it actually is
 
 Most "AI coding agent" setups put the agent on the developer's laptop and
-hope for the best. Praut inverts that:
+hope for the best. AgenticDev inverts that:
 
 - **The server supplies the working context.** Which project, which phase,
   which files are in scope, which instructions and skills the agent gets —
@@ -69,12 +69,12 @@ Download the release artifact and its checksum, verify, then run it. Do not
 pipe it into bash; the installer refuses to run that way on purpose.
 
 ```bash
-curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/praut-install-vps.sh
-curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/praut-install-vps.sh.sha256
-sha256sum -c praut-install-vps.sh.sha256
+curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/agenticdev-install-vps.sh
+curl -fLO https://github.com/Praut-Startup-Support/AgenticDev/releases/latest/download/agenticdev-install-vps.sh.sha256
+sha256sum -c agenticdev-install-vps.sh.sha256
 
-scp praut-install-vps.sh root@your-vps:/root/
-ssh root@your-vps 'bash /root/praut-install-vps.sh'
+scp agenticdev-install-vps.sh root@your-vps:/root/
+ssh root@your-vps 'bash /root/agenticdev-install-vps.sh'
 ```
 
 It asks five questions and does the rest: Docker, firewall, SSH hardening,
@@ -83,9 +83,9 @@ Tailscale, Postgres, Forgejo, MinIO, Caddy, the control plane, daily backups.
 Useful flags:
 
 ```bash
-bash praut-install-vps.sh --check      # verify the payload, touch nothing
-bash praut-install-vps.sh --yes        # non-interactive, reads env vars
-bash praut-install-vps.sh --mac-only   # regenerate the Mac installer only
+bash agenticdev-install-vps.sh --check      # verify the payload, touch nothing
+bash agenticdev-install-vps.sh --yes        # non-interactive, reads env vars
+bash agenticdev-install-vps.sh --mac-only   # regenerate the Mac installer only
 ```
 
 When it finishes it prints two links:
@@ -105,7 +105,7 @@ pick their operating system, and get two commands to paste.
 **macOS · Linux · Windows.** Windows runs through WSL2.
 
 The installer registers that machine under the person's own name and email,
-uploads their SSH key to Forgejo, and puts a **Praut icon** on their desktop.
+uploads their SSH key to Forgejo, and puts a **AgenticDev icon** on their desktop.
 Clicking it opens the agent and a project picker.
 
 They show up in the admin panel's *team* tab, where you can revoke any single
@@ -124,19 +124,21 @@ Everything else — the panel, git, the API — stays on your tailnet.
 Model provider and API key, egress allowlist, both passwords, lease duration,
 Tailscale keys, and SMTP are editable in the panel and take effect
 immediately. Settings that need a container restart live in
-`/srv/praut/config/.env` and the panel shows them read-only.
+`/srv/agenticdev/config/.env` and the panel shows them read-only.
 
 ---
 
 ## Daily use
 
-Click the **Praut** icon, or from a terminal:
+Click the **AgenticDev** icon, or from a terminal:
 
 ```bash
-praut work                 # pick a project, get a task, start a pod
-praut work acme            # straight to one project
-praut doctor               # check local prerequisites
+agenticdev work                 # pick a project, get a task, start a pod
+agenticdev work acme            # straight to one project
+agenticdev doctor          # check local prerequisites
 ```
+
+`adev` works as a shorthand for `agenticdev`.
 
 The pod comes up with an egress proxy in front of it, a read-only context
 bundle, secrets on tmpfs with a TTL, and a git checkout on a work branch.
@@ -146,7 +148,7 @@ Teardown removes all of it.
 
 ## How the sandbox works
 
-`praut work` does not run the agent on your machine. It brings up two
+`agenticdev work` does not run the agent on your machine. It brings up two
 containers:
 
 ```
@@ -158,7 +160,7 @@ containers:
       │
       └── /workspace   repo read-only, scope paths remounted rw
           /ctx         context bundle, read-only
-          /run/praut   token and policy, tmpfs, gone on teardown
+          /run/agenticdev   token and policy, tmpfs, gone on teardown
 ```
 
 Git operations that touch the network stay on the host — the agent commits
@@ -175,21 +177,25 @@ fails loudly instead of quietly not protecting anything.
 
 This is the part worth understanding.
 
-`control-plane/app/workspace.py` merges two files: the base
-`workspace/_base/.claude/settings.json` and the phase overlay in
-`workspace/_phase/<phase>/.claude/settings.json`. The result is what the pod
-receives.
+Each phase has a `scope` file listing the paths it may write to:
 
-| Phase | Writes to `src/**` |
+| Phase | Writable |
 |---|---|
-| discovery | denied |
-| design | denied |
-| implementation | allowed |
-| hardening | allowed |
-| delivery | per scope |
+| discovery | `prd/**`, `docs/**` |
+| design | + `design/**` |
+| implementation | `src/**`, `tests/**`, ADRs |
+| hardening | + `infra/**` |
+| delivery | `docs/**`, README, CHANGELOG |
 
-So changing what an agent may do during design means editing
-`workspace/_phase/design/.claude/settings.json` — not editing a user.
+The control plane sends that list to the launcher, which mounts the
+repository read-only and remounts exactly those paths writable. So changing
+what an agent may do during design means editing
+`workspace/_phase/design/scope` — not editing a user, and not trusting the
+agent to respect a rule.
+
+`control-plane/app/workspace.py` also merges `.pi/settings.json` across the
+base and phase layers, and chains `AGENTS.md` — but those carry
+instructions, not the boundary. The boundary is the mount.
 
 ---
 
@@ -197,10 +203,9 @@ So changing what an agent may do during design means editing
 
 | I want to… | Edit |
 |---|---|
-| change what an agent may do in a phase | `workspace/_phase/<phase>/.claude/settings.json` |
+| change what an agent may do in a phase | `workspace/_phase/<phase>/scope` |
 | add a phase | `workspace/_phase/<new>/`, then `make verify` |
 | change instructions for all projects | `workspace/_base/AGENTS.md` |
-| change task orchestration | `directors/<name>/director.yaml` and `workers/` |
 | add a service on the server | `vps/docker-compose.yml` and `vps/Caddyfile` |
 | change the database schema | `vps/sql/001_schema.sql` — as a migration, not a rewrite |
 | change what the harness enforces | `pod/harness/harness.py` |
@@ -214,7 +219,7 @@ You can build and verify it yourself:
 
 ```bash
 make verify     # check that every path the tree promises actually exists
-make dist       # build dist/praut-install-vps.sh and its checksum
+make dist       # build dist/agenticdev-install-vps.sh and its checksum
 make check-dist # run the built artifact's own --check
 ```
 
@@ -227,8 +232,6 @@ same checksum.
 
 Honest status. These are tracked as blockers to 1.0:
 
-- **Directors are not signed.** The harness verifies a signature nothing
-  currently produces. Do not run pods on machines you do not control.
 - **No server-side merge gate.** The agent runs its own tests inside its own
   pod. Fine for a small trusted team; not sufficient otherwise.
 - **No observability stack.** Grafana and Loki are commented out; the harness
@@ -237,6 +240,9 @@ Honest status. These are tracked as blockers to 1.0:
 - **Token counting is an estimate** (`len/3`), and model prices in `PRICING`
   are unverified. Dashboard cost figures are indicative only.
 - **CI is not written.** Forgejo Actions is enabled; no workflows exist.
+- **The orchestration layer (directors) does not exist.** The architecture
+  document describes it; the code does not contain it. The agent works
+  without a state machine.
 - **Container escape is out of scope.** The pod drops all capabilities,
   runs non-root, and has no Docker socket — but a container is not a
   hypervisor. Treat it as a strong fence, not a vault.
@@ -260,6 +266,14 @@ Binding text: [LICENSE](LICENSE).
 Commercial licensing: **svanda@praut.cz**
 
 © 2026 Praut s.r.o.
+
+---
+
+## Website
+
+A one-page site lives in [`site/`](site/) and deploys to GitHub Pages.
+See [site/README.md](site/README.md) for the two things to fill in before
+it goes live.
 
 ---
 

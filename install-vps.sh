@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════════════
-#  PRAUT PLATFORM — instalátor VPS
+#  AGENTICDEV PLATFORM — instalátor VPS
 #
 #  Jeden soubor. Nese v sobě celý repozitář platformy.
 #
-#      scp praut-install-vps.sh root@<vps>:/root/
-#      ssh root@<vps> 'bash /root/praut-install-vps.sh'
+#      scp agenticdev-install-vps.sh root@<vps>:/root/
+#      ssh root@<vps> 'bash /root/agenticdev-install-vps.sh'
 #
-#  Po dokončení najdeš v /srv/praut/out/ druhý instalátor —
-#  praut-install-mac.sh — svázaný právě s tímhle VPS.
+#  Po dokončení najdeš v /srv/agenticdev/out/ druhý instalátor —
+#  agenticdev-install-mac.sh — svázaný právě s tímhle VPS.
 #
 #  Idempotentní: pusť znovu, nic nerozbije, tajemství zachová.
 #
@@ -28,11 +28,11 @@ info() { printf "${DIM}    %s${OFF}\n" "$*"; }
 die()  { printf "\n${RED}✗ %s${OFF}\n" "$*" >&2; exit 1; }
 
 SELF="${BASH_SOURCE[0]:-$0}"
-ROOT=/srv/praut
+ROOT=/srv/agenticdev
 SRC=$ROOT/src
 ENVF=$ROOT/config/.env
 LOG=$ROOT/install.log
-MARKER='#__PRAUT_PAYLOAD_BELOW__'
+MARKER='#__AGENTICDEV_PAYLOAD_BELOW__'
 
 MODE_CHECK=0; MODE_YES=0; MODE_MAC=0
 for a in "$@"; do case "$a" in
@@ -44,7 +44,7 @@ for a in "$@"; do case "$a" in
 esac; done
 
 [[ -r "$SELF" ]] || die "Instalátor musí být SOUBOR na disku — přes 'curl | bash' se nerozbalí.
-   Stáhni ho a spusť:  bash praut-install-vps.sh"
+   Stáhni ho a spusť:  bash agenticdev-install-vps.sh"
 
 ask() {  # ask <proměnná> <otázka> <default>
   local __v=$1 __q=$2 __d=${3:-} __r
@@ -146,8 +146,8 @@ if command -v rsync >/dev/null; then
 else
   rm -rf "$SRC"; mkdir -p "$SRC"; cp -a "$STAGE"/. "$SRC"/
 fi
-chmod +x "$SRC"/*.sh "$SRC"/tools/*.sh "$SRC"/launcher/praut \
-         "$SRC"/vps/*.sh "$SRC"/vps/praut-ctl "$SRC"/vps/backup/*.sh \
+chmod +x "$SRC"/*.sh "$SRC"/tools/*.sh "$SRC"/launcher/agenticdev \
+         "$SRC"/vps/*.sh "$SRC"/vps/agenticdev-ctl "$SRC"/vps/backup/*.sh \
          "$SRC"/workspace/_base/bin/* 2>/dev/null || true
 # Aby fungovalo i ruční `docker compose ...` bez --env-file. Bez toho
 # spadne interpolace na "required variable ... is missing a value".
@@ -172,7 +172,7 @@ if [[ -f $ENVF ]]; then
   step "Konfigurace už existuje — aktualizuji instalaci"
   # shellcheck disable=SC1090
   set -a; . $ENVF; set +a
-  DOMAIN="${PRAUT_DOMAIN:-}"; ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-}"
+  DOMAIN="${AGENTICDEV_DOMAIN:-}"; ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-}"
   ADMIN_USER="${FORGEJO_ADMIN_USER:-admin}"
   info "tajemství zůstávají, měnit je nebudu"
 else
@@ -270,9 +270,9 @@ fi
 [[ -n "$TS_IP" ]] || die "Tailscale se nepřipojil. Spusť 'tailscale up --ssh' a pusť instalátor znovu."
 ok "tailnet IP: $TS_IP"
 
-PRAUT_MODE=tailnet
+AGENTICDEV_MODE=tailnet
 if [[ -n "${DOMAIN:-}" ]]; then
-  PRAUT_MODE=public
+  AGENTICDEV_MODE=public
   PUB_IP=$(curl -fsS --max-time 5 https://api.ipify.org 2>/dev/null || true)
   DNS_IP=$(getent ahostsv4 "$DOMAIN" 2>/dev/null | awk '{print $1; exit}')
   if [[ -n "$PUB_IP" && -n "$DNS_IP" && "$PUB_IP" != "$DNS_IP" ]]; then
@@ -294,7 +294,7 @@ ufw --force reset >>"$LOG" 2>&1
 ufw default deny incoming  >>"$LOG" 2>&1
 ufw default allow outgoing >>"$LOG" 2>&1
 ufw allow 22/tcp           >>"$LOG" 2>&1
-if [[ "$PRAUT_MODE" == "public" ]]; then
+if [[ "$AGENTICDEV_MODE" == "public" ]]; then
   ufw allow 80/tcp  >>"$LOG" 2>&1   # ACME HTTP-01 + přesměrování na https
   ufw allow 443/tcp >>"$LOG" 2>&1
 fi
@@ -304,7 +304,7 @@ ufw --force enable         >>"$LOG" 2>&1
 
 # SSH hardening opatrně: na VPS je SSH jediná cesta zpátky.
 # Zapíšeme, otestujeme, a když test neprojde, změnu vrátíme.
-SSHD_DROPIN=/etc/ssh/sshd_config.d/99-praut.conf
+SSHD_DROPIN=/etc/ssh/sshd_config.d/99-agenticdev.conf
 if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config 2>/dev/null; then
   install -d -m 0755 /etc/ssh/sshd_config.d
   cat >"$SSHD_DROPIN" <<'EOF'
@@ -324,7 +324,7 @@ else
   info "dopiš si ručně: PasswordAuthentication no, PermitRootLogin prohibit-password"
 fi
 
-if [[ "$PRAUT_MODE" == "public" ]]; then
+if [[ "$AGENTICDEV_MODE" == "public" ]]; then
   ok "zvenčí otevřené 22, 80, 443"
   info "80 potřebuje Caddy na vydání certifikátu; jinak jen přesměrovává"
 else
@@ -360,7 +360,7 @@ if (( FRESH )); then
   ALLOW="registry.npmjs.org,pypi.org,files.pythonhosted.org,codeload.github.com,github.com"
   [[ -n "${PROV_HOST:-}" ]] && ALLOW="$PROV_HOST,$ALLOW"
 
-  if [[ "$PRAUT_MODE" == "public" ]]; then
+  if [[ "$AGENTICDEV_MODE" == "public" ]]; then
     CP_URL="https://$DOMAIN"; FJ_ROOT="https://$DOMAIN/git/"
   else
     CP_URL="http://$TS_IP:8080"; FJ_ROOT="http://$TS_IP:3000/"
@@ -369,14 +369,14 @@ if (( FRESH )); then
   umask 077
   cat >$ENVF <<EOF
 # ═══════════════════════════════════════════════════════════════
-#  Praut Platform — konfigurace instance
+#  AgenticDev — konfigurace instance
 #  Vygenerováno: $(date -u +%Y-%m-%dT%H:%M:%SZ)
 #  NEVERZUJ. WO_SIGNING_KEY_B64 si zvlášť zazálohuj mimo tenhle stroj —
 #  bez něj neověříš dřív vydané work ordery.
 # ═══════════════════════════════════════════════════════════════
-PRAUT_INSTANCE_ID=$INSTANCE_ID
-PRAUT_MODE=$PRAUT_MODE
-PRAUT_DOMAIN=$DOMAIN
+AGENTICDEV_INSTANCE_ID=$INSTANCE_ID
+AGENTICDEV_MODE=$AGENTICDEV_MODE
+AGENTICDEV_DOMAIN=$DOMAIN
 CONTROL_PLANE_URL=$CP_URL
 VPS_HOST=$TS_IP
 TZ=Europe/Prague
@@ -424,7 +424,7 @@ MODEL_MAX_TOKENS=8000
 OLLAMA_HOST=http://host.docker.internal:11434
 EGRESS_ALLOWLIST=$ALLOW
 
-# ─── zálohy: doplň a spusť 'systemctl enable --now praut-backup.timer' ──
+# ─── zálohy: doplň a spusť 'systemctl enable --now agenticdev-backup.timer' ──
 RESTIC_REPOSITORY=
 RESTIC_PASSWORD=
 AWS_ACCESS_KEY_ID=
@@ -442,8 +442,8 @@ EOF
 else
   # doplnění chybějících položek při upgradu ze starší verze
   add() { grep -q "^$1=" $ENVF || echo "$1=$2" >>$ENVF; }
-  add PRAUT_INSTANCE_ID "$(cat /proc/sys/kernel/random/uuid)"
-  add PRAUT_MODE        "$([[ -n "${PRAUT_DOMAIN:-}" ]] && echo public || echo tailnet)"
+  add AGENTICDEV_INSTANCE_ID "$(cat /proc/sys/kernel/random/uuid)"
+  add AGENTICDEV_MODE        "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo public || echo tailnet)"
   add LEASE_HOURS       4
   add ENROLL_PASSWORD   "$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
   add TS_AUTHKEY        ""
@@ -451,8 +451,8 @@ else
   add TS_TAILNET        "-"
   add FORGEJO_SECRET_KEY "$(openssl rand -base64 80 | tr -d '\n=+/' | cut -c1-64)"
   add LOCAL_MODEL       "local/qwen2.5-coder:32b"
-  add CONTROL_PLANE_URL "$([[ -n "${PRAUT_DOMAIN:-}" ]] && echo "https://$PRAUT_DOMAIN" || echo "http://$TS_IP:8080")"
-  add FORGEJO_ROOT_URL  "$([[ -n "${PRAUT_DOMAIN:-}" ]] && echo "https://$PRAUT_DOMAIN/git/" || echo "http://$TS_IP:3000/")"
+  add CONTROL_PLANE_URL "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo "https://$AGENTICDEV_DOMAIN" || echo "http://$TS_IP:8080")"
+  add FORGEJO_ROOT_URL  "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo "https://$AGENTICDEV_DOMAIN/git/" || echo "http://$TS_IP:3000/")"
   if ! grep -q '^WO_VERIFY_KEY_B64=..' $ENVF; then
     warn "chybí veřejný klíč k podpisovému — dopočítat ho z privátního neumím bez Pythonu"
     python3 - "$ENVF" <<'PY' || warn "doplň WO_VERIFY_KEY_B64 ručně"
@@ -480,7 +480,7 @@ set -a; . $ENVF; set +a
 # ═══════════════════════════════════════════════════════════════════════
 step "Start služeb"
 PROFILE_ARGS=""
-[[ "$PRAUT_MODE" == "public" ]] && PROFILE_ARGS="--profile public"
+[[ "$AGENTICDEV_MODE" == "public" ]] && PROFILE_ARGS="--profile public"
 # shellcheck disable=SC2086
 dc() { (cd "$SRC/vps" && docker compose $PROFILE_ARGS --env-file $ENVF "$@"); }
 
@@ -489,12 +489,12 @@ dc() { (cd "$SRC/vps" && docker compose $PROFILE_ARGS --env-file $ENVF "$@"); }
 # pro *.ts.net (Let's Encrypt takovou doménu nikdy neověří — nemá veřejný
 # DNS záznam). U běžné veřejné domény ale ten blok musí pryč, jinak by
 # Caddy hledal certifikát u tailscaled místo u ACME.
-if [[ "$PRAUT_MODE" == "public" ]]; then
-  if [[ "$PRAUT_DOMAIN" == *.ts.net ]]; then
-    if ! tailscale cert "$PRAUT_DOMAIN" >>"$LOG" 2>&1; then
-      warn "Tailscale ti zatím nevydá HTTPS certifikát pro $PRAUT_DOMAIN"
+if [[ "$AGENTICDEV_MODE" == "public" ]]; then
+  if [[ "$AGENTICDEV_DOMAIN" == *.ts.net ]]; then
+    if ! tailscale cert "$AGENTICDEV_DOMAIN" >>"$LOG" 2>&1; then
+      warn "Tailscale ti zatím nevydá HTTPS certifikát pro $AGENTICDEV_DOMAIN"
       info "Zapni to jednou: https://login.tailscale.com/admin/dns → HTTPS Certificates → Enable HTTPS"
-      info "Pak spusť: praut-ctl restart caddy"
+      info "Pak spusť: agenticdev-ctl restart caddy"
     else
       ok "TLS certifikát od Tailscale"
     fi
@@ -515,7 +515,7 @@ run "docker compose up      " bash -c \
 
 printf "  čekám na databázi       "
 for i in $(seq 1 60); do
-  dc exec -T postgres pg_isready -U praut -d praut >/dev/null 2>&1 && break
+  dc exec -T postgres pg_isready -U agenticdev -d agenticdev >/dev/null 2>&1 && break
   printf "."; sleep 3
   [[ $i -eq 60 ]] && { echo; dc logs --tail=40 postgres; die "postgres nenaběhl"; }
 done
@@ -530,7 +530,7 @@ done
 printf " ${GRN}✓${OFF}\n"
 
 # sandbox projekt ať smí model, který jsi vybral
-dc exec -T postgres psql -qtAX -U praut -d praut -c \
+dc exec -T postgres psql -qtAX -U agenticdev -d agenticdev -c \
   "UPDATE project SET model_allowlist = ARRAY['$DEFAULT_MODEL','$LOCAL_MODEL']
     WHERE code = 'sandbox'" >>"$LOG" 2>&1 || true
 
@@ -558,7 +558,7 @@ fi
 
 if [[ -z "${FORGEJO_TOKEN:-}" ]]; then
   TOK=$(dc exec -T -u git forgejo forgejo admin user generate-access-token \
-        --username "$FORGEJO_ADMIN_USER" --token-name "praut-$(date +%s)" \
+        --username "$FORGEJO_ADMIN_USER" --token-name "agenticdev-$(date +%s)" \
         --scopes write:repository,write:user,write:admin 2>/dev/null \
         | grep -oE '[A-Za-z0-9]{40}' | head -1 || true)
   if [[ -n "$TOK" ]]; then
@@ -577,18 +577,18 @@ fi
 #  8. Zálohy
 # ═══════════════════════════════════════════════════════════════════════
 step "Denní zálohy"
-install -m 0700 "$SRC/vps/backup/restic-backup.sh" /usr/local/bin/praut-backup
-cat >/etc/systemd/system/praut-backup.service <<EOF
+install -m 0700 "$SRC/vps/backup/restic-backup.sh" /usr/local/bin/agenticdev-backup
+cat >/etc/systemd/system/agenticdev-backup.service <<EOF
 [Unit]
-Description=Praut záloha
+Description=AgenticDev záloha
 [Service]
 Type=oneshot
 EnvironmentFile=$ENVF
-ExecStart=/usr/local/bin/praut-backup
+ExecStart=/usr/local/bin/agenticdev-backup
 EOF
-cat >/etc/systemd/system/praut-backup.timer <<'EOF'
+cat >/etc/systemd/system/agenticdev-backup.timer <<'EOF'
 [Unit]
-Description=Denní záloha Praut
+Description=Denní záloha AgenticDev
 [Timer]
 OnCalendar=*-*-* 02:30:00
 RandomizedDelaySec=15m
@@ -598,21 +598,21 @@ WantedBy=timers.target
 EOF
 systemctl daemon-reload
 if grep -q '^RESTIC_REPOSITORY=.\+' $ENVF; then
-  systemctl enable --now praut-backup.timer >>"$LOG" 2>&1
+  systemctl enable --now agenticdev-backup.timer >>"$LOG" 2>&1
   ok "timer aktivní (02:30)"
 else
   warn "zálohy vypnuté — doplň RESTIC_REPOSITORY a RESTIC_PASSWORD do $ENVF"
-  info "pak: systemctl enable --now praut-backup.timer"
+  info "pak: systemctl enable --now agenticdev-backup.timer"
 fi
 
 # ═══════════════════════════════════════════════════════════════════════
 #  9. Nástroje na VPS
 # ═══════════════════════════════════════════════════════════════════════
 step "Nástroje"
-install -m 0755 "$SRC/vps/praut-ctl" /usr/local/bin/praut-ctl
-cat >/usr/local/bin/praut-info <<'INFOEOF'
+install -m 0755 "$SRC/vps/agenticdev-ctl" /usr/local/bin/agenticdev-ctl
+cat >/usr/local/bin/agenticdev-info <<'INFOEOF'
 #!/usr/bin/env bash
-set -a; . /srv/praut/config/.env; set +a
+set -a; . /srv/agenticdev/config/.env; set +a
 Y='\033[1;33m'; B='\033[1;36m'; D='\033[2m'; O='\033[0m'
 CP="${CONTROL_PLANE_URL:-http://$VPS_HOST:8080}"
 printf "\n  ${B}NÁSTĚNKA${O}   %s\n" "$CP"
@@ -622,13 +622,13 @@ printf "             %s / ${Y}%s${O}\n" "$FORGEJO_ADMIN_USER" "$FORGEJO_ADMIN_PA
 printf "\n  ${B}ODKAZ PRO TÝM${O}   %s\n" "${JOIN_URL:-（Funnel neběží）}"
 printf "             heslo: ${Y}%s${O}\n" "$ENROLL_PASSWORD"
 printf "\n  ${B}INSTALÁTOR MACU${O}\n"
-printf "             /srv/praut/out/praut-install-mac.sh\n"
-printf "             ${D}scp root@%s:/srv/praut/out/praut-install-mac.sh ~/Downloads/${O}\n" "$VPS_HOST"
-printf "\n  ${B}INSTANCE${O}   %s\n" "$PRAUT_INSTANCE_ID"
-printf "  ${D}praut-ctl status | logs | mac | backup-now${O}\n\n"
+printf "             /srv/agenticdev/out/agenticdev-install-mac.sh\n"
+printf "             ${D}scp root@%s:/srv/agenticdev/out/agenticdev-install-mac.sh ~/Downloads/${O}\n" "$VPS_HOST"
+printf "\n  ${B}INSTANCE${O}   %s\n" "$AGENTICDEV_INSTANCE_ID"
+printf "  ${D}agenticdev-ctl status | logs | mac | backup-now${O}\n\n"
 INFOEOF
-chmod +x /usr/local/bin/praut-info
-ok "praut-ctl, praut-info"
+chmod +x /usr/local/bin/agenticdev-info
+ok "agenticdev-ctl, agenticdev-info"
 
 # ═══════════════════════════════════════════════════════════════════════
 #  10. Druhý instalátor — svázaný s touhle instancí
@@ -637,11 +637,11 @@ step "Generuji instalátor Macu"
 MACF=$(bash "$SRC/vps/mk-mac-installer.sh") || die "generátor selhal, viz $LOG"
 ok "$MACF"
 info "vazba: adresa control plane + join token + fingerprint instance + host key gitu"
-cat >/usr/local/bin/praut-mac-installer <<EOF
+cat >/usr/local/bin/agenticdev-mac-installer <<EOF
 #!/usr/bin/env bash
 exec bash $SRC/vps/mk-mac-installer.sh "\$@"
 EOF
-chmod +x /usr/local/bin/praut-mac-installer
+chmod +x /usr/local/bin/agenticdev-mac-installer
 
 # ═══════════════════════════════════════════════════════════════════════
 #  10b. Veřejná registrace — Tailscale Funnel
@@ -681,7 +681,7 @@ curl -fsS "http://$VPS_HOST:8080/v1/identity" | grep -q fingerprint && ok "ident
 LISTEN=$(ss -tlnH 2>/dev/null | awk '{print $4}' | grep -E '^(0\.0\.0\.0|\*|\[::\])' \
          | sed 's/.*://' | sort -un | tr '\n' ' ')
 printf "  ${DIM}naslouchá na všech adresách: %s${OFF}\n" "${LISTEN:-nic}"
-if [[ "$PRAUT_MODE" == "public" ]]; then
+if [[ "$AGENTICDEV_MODE" == "public" ]]; then
   info "očekávané: 22 80 443 — cokoli dalšího prověř"
 else
   info "očekávané: 22 — cokoli dalšího prověř"
@@ -716,14 +716,14 @@ cat <<EOF
   ${YLW}Zazálohuj si mimo tenhle stroj:${OFF}
      $ENVF        ${DIM}(hlavně WO_SIGNING_KEY_B64)${OFF}
 
-  ${DIM}Tenhle výpis znovu:  praut-info
-  Obsluha:             praut-ctl status | logs | mac | backup-now${OFF}
+  ${DIM}Tenhle výpis znovu:  agenticdev-info
+  Obsluha:             agenticdev-ctl status | logs | mac | backup-now${OFF}
 
 EOF
 [[ -z "${MODEL_API_KEY:-}" ]] && \
-  warn "MODEL_API_KEY je prázdný — doplň ho do $ENVF a pusť: praut-ctl restart control-plane"
-[[ "$PRAUT_MODE" == "tailnet" ]] && \
-  info "Bez domény jede platforma jen po tailnetu. Doménu doplníš do $ENVF (PRAUT_DOMAIN, PRAUT_MODE=public) a pustíš 'praut-ctl up'."
+  warn "MODEL_API_KEY je prázdný — doplň ho do $ENVF a pusť: agenticdev-ctl restart control-plane"
+[[ "$AGENTICDEV_MODE" == "tailnet" ]] && \
+  info "Bez domény jede platforma jen po tailnetu. Doménu doplníš do $ENVF (AGENTICDEV_DOMAIN, AGENTICDEV_MODE=public) a pustíš 'agenticdev-ctl up'."
 
 exit 0
-#__PRAUT_PAYLOAD_BELOW__
+#__AGENTICDEV_PAYLOAD_BELOW__

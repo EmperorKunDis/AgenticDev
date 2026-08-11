@@ -32,7 +32,7 @@ import subprocess
 import sys
 import time
 
-POLICY = pathlib.Path("/run/praut/policy.json")
+POLICY = pathlib.Path("/run/agenticdev/policy.json")
 WORKSPACE = pathlib.Path("/workspace")
 
 C_OK, C_WARN, C_ERR, C_DIM, C_OFF = "\033[1;32m", "\033[1;33m", "\033[1;31m", "\033[2m", "\033[0m"
@@ -105,7 +105,7 @@ def check_budget(p: dict) -> None:
     b = p.get("budget_tokens")
     if not b:
         return
-    ctx = WORKSPACE / ".praut"
+    ctx = WORKSPACE / ".agenticdev"
     used = 0
     if ctx.is_dir():
         for f in ctx.rglob("*"):
@@ -128,7 +128,7 @@ def check_scope(p: dict) -> None:
     a je lepší to říct nahlas než předstírat, že platí.
     """
     scope = p["scope"]
-    probe = WORKSPACE / ".praut-write-probe"
+    probe = WORKSPACE / ".agenticdev-write-probe"
     writable_root = False
     try:
         probe.touch()
@@ -146,7 +146,7 @@ def check_scope(p: dict) -> None:
         d = WORKSPACE / s.split("/")[0]
         if not d.exists():
             continue
-        t = d / ".praut-write-probe"
+        t = d / ".agenticdev-write-probe"
         try:
             t.touch(); t.unlink(); ok.append(s)
         except OSError:
@@ -163,14 +163,14 @@ def materialize(p: dict) -> None:
     if ctx.is_dir() and any(ctx.iterdir()):
         note(f"kontext {len(list(ctx.rglob('*')))} souborů (read-only)")
 
-    praut = WORKSPACE / ".praut"
+    agenticdev = WORKSPACE / ".agenticdev"
     try:
-        praut.mkdir(exist_ok=True)
-        (praut / "policy.json").write_text(
+        agenticdev.mkdir(exist_ok=True)
+        (agenticdev / "policy.json").write_text(
             json.dumps({k: v for k, v in p.items() if k != "secrets"},
                        ensure_ascii=False, indent=2))
     except OSError as e:
-        fail(f"Do .praut/ se nedá zapsat: {e}")
+        fail(f"Do .agenticdev/ se nedá zapsat: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -179,10 +179,10 @@ def materialize(p: dict) -> None:
 def run_agent(p: dict) -> int:
     env = os.environ.copy()
     env.update({
-        "PRAUT_PROJECT": p["project"],
-        "PRAUT_PHASE": p["phase"],
-        "PRAUT_DATA_CLASS": p["data_class"],
-        "PRAUT_MODEL": str(p["model"] or ""),
+        "AGENTICDEV_PROJECT": p["project"],
+        "AGENTICDEV_PHASE": p["phase"],
+        "AGENTICDEV_DATA_CLASS": p["data_class"],
+        "AGENTICDEV_MODEL": str(p["model"] or ""),
         "PATH": f"/workspace/bin:{env.get('PATH', '')}",
     })
 

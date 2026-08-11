@@ -26,13 +26,13 @@ jobs:
         run: make dist
 
       - name: Self-check
-        run: bash dist/praut-install-vps.sh --check
+        run: bash dist/agenticdev-install-vps.sh --check
 
       - name: Verify reproducibility
         run: |
-          a=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          a=$(cut -d' ' -f1 dist/agenticdev-install-vps.sh.sha256)
           make clean && make dist
-          b=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          b=$(cut -d' ' -f1 dist/agenticdev-install-vps.sh.sha256)
           [ "$a" = "$b" ] || { echo "::error::not reproducible"; exit 1; }
           echo "sha256=$a" >> "$GITHUB_ENV"
 
@@ -45,14 +45,14 @@ jobs:
       - name: Sign
         run: |
           cosign sign-blob --yes \
-            --output-signature dist/praut-install-vps.sh.sig \
-            --output-certificate dist/praut-install-vps.sh.pem \
-            dist/praut-install-vps.sh
+            --output-signature dist/agenticdev-install-vps.sh.sig \
+            --output-certificate dist/agenticdev-install-vps.sh.pem \
+            dist/agenticdev-install-vps.sh
 
       - name: Build provenance attestation
         uses: actions/attest-build-provenance@v1
         with:
-          subject-path: dist/praut-install-vps.sh
+          subject-path: dist/agenticdev-install-vps.sh
 
       # ── Vydat ───────────────────────────────────────────────────────
       - name: Verification instructions
@@ -63,7 +63,7 @@ jobs:
           # Verifying this release
 
           \`\`\`bash
-          sha256sum -c praut-install-vps.sh.sha256
+          sha256sum -c agenticdev-install-vps.sh.sha256
           \`\`\`
 
           Expected: \`${{ env.sha256 }}\`
@@ -75,11 +75,11 @@ jobs:
 
           \`\`\`bash
           cosign verify-blob \\
-            --certificate praut-install-vps.sh.pem \\
-            --signature praut-install-vps.sh.sig \\
+            --certificate agenticdev-install-vps.sh.pem \\
+            --signature agenticdev-install-vps.sh.sig \\
             --certificate-identity-regexp "^https://github.com/${REPO}/" \\
             --certificate-oidc-issuer https://token.actions.githubusercontent.com \\
-            praut-install-vps.sh
+            agenticdev-install-vps.sh
           \`\`\`
 
           ## Build it yourself
@@ -88,7 +88,7 @@ jobs:
           git clone https://github.com/${REPO}
           cd AgenticDev && git checkout ${TAG}
           make dist
-          sha256sum dist/praut-install-vps.sh
+          sha256sum dist/agenticdev-install-vps.sh
           \`\`\`
 
           The build is deterministic — you should get the same hash.
@@ -101,10 +101,10 @@ jobs:
           draft: true          # zkontroluj a vydej ručně
           generate_release_notes: true
           files: |
-            dist/praut-install-vps.sh
-            dist/praut-install-vps.sh.sha256
-            dist/praut-install-vps.sh.sig
-            dist/praut-install-vps.sh.pem
+            dist/agenticdev-install-vps.sh
+            dist/agenticdev-install-vps.sh.sha256
+            dist/agenticdev-install-vps.sh.sig
+            dist/agenticdev-install-vps.sh.pem
             dist/VERIFY.md
           body: |
             > **Alpha release.** Read `SECURITY.md` → *Known limitations*
@@ -113,12 +113,12 @@ jobs:
             ## Install
 
             ```bash
-            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/praut-install-vps.sh
-            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/praut-install-vps.sh.sha256
-            sha256sum -c praut-install-vps.sh.sha256
+            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/agenticdev-install-vps.sh
+            curl -fLO https://github.com/${{ github.repository }}/releases/download/${{ github.event.inputs.tag || github.ref_name }}/agenticdev-install-vps.sh.sha256
+            sha256sum -c agenticdev-install-vps.sh.sha256
 
-            scp praut-install-vps.sh root@your-vps:/root/
-            ssh root@your-vps 'bash /root/praut-install-vps.sh'
+            scp agenticdev-install-vps.sh root@your-vps:/root/
+            ssh root@your-vps 'bash /root/agenticdev-install-vps.sh'
             ```
 
             `sha256: ${{ env.sha256 }}`

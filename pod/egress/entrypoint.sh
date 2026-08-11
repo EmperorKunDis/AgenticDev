@@ -5,7 +5,7 @@
 #  Pod je na síti bez routy do internetu. Všechno, co má odejít, jde
 #  přes tenhle proces, a ten pustí jen domény z allowlistu.
 #
-#  Allowlist přichází v PRAUT_EGRESS_ALLOW, čárkou oddělený. Prázdný
+#  Allowlist přichází v AGENTICDEV_EGRESS_ALLOW, čárkou oddělený. Prázdný
 #  seznam znamená "nepustit nic" — ne "pustit všechno". Kdyby to bylo
 #  naopak, chyba v konfiguraci by tiše otevřela síť dokořán.
 # ═══════════════════════════════════════════════════════════════
@@ -14,12 +14,12 @@ set -eu
 CONF=/tmp/tinyproxy.conf
 FILTER=/tmp/allow.txt
 
-: "${PRAUT_EGRESS_ALLOW:=}"
+: "${AGENTICDEV_EGRESS_ALLOW:=}"
 
 # Regexy pro tinyproxy. Doména se ukotví z obou stran, aby "api.cz"
 # nepustilo taky "api.cz.utocnik.example".
 : > "$FILTER"
-echo "$PRAUT_EGRESS_ALLOW" | tr ',' '\n' | while IFS= read -r d; do
+echo "$AGENTICDEV_EGRESS_ALLOW" | tr ',' '\n' | while IFS= read -r d; do
   d=$(printf '%s' "$d" | tr -d '[:space:]')
   [ -n "$d" ] || continue
   esc=$(printf '%s' "$d" | sed 's/\./\\./g')

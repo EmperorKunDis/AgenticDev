@@ -1,12 +1,12 @@
 -- ═══════════════════════════════════════════════════════════════
---  Praut Platform — ledger (L2)
+--  AgenticDev — ledger (L2)
 --  Spouští se automaticky při prvním startu Postgresu.
 -- ═══════════════════════════════════════════════════════════════
 CREATE EXTENSION IF NOT EXISTS vector;
 CREATE EXTENSION IF NOT EXISTS pgcrypto;
-CREATE DATABASE forgejo OWNER praut;
+CREATE DATABASE forgejo OWNER agenticdev;
 
-\c praut
+\c agenticdev
 
 -- ─── Číselníky ─────────────────────────────────────────────────
 CREATE TYPE phase_kind  AS ENUM ('discovery','design','implementation','hardening','delivery','support');

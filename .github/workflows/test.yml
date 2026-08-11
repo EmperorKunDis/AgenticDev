@@ -55,9 +55,9 @@ jobs:
       - name: Build twice, compare
         run: |
           make dist
-          a=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          a=$(cut -d' ' -f1 dist/agenticdev-install-vps.sh.sha256)
           make clean && make dist
-          b=$(cut -d' ' -f1 dist/praut-install-vps.sh.sha256)
+          b=$(cut -d' ' -f1 dist/agenticdev-install-vps.sh.sha256)
           echo "build 1: $a"
           echo "build 2: $b"
           if [ "$a" != "$b" ]; then
@@ -66,7 +66,7 @@ jobs:
           fi
 
       - name: Artifact self-check
-        run: bash dist/praut-install-vps.sh --check
+        run: bash dist/agenticdev-install-vps.sh --check
 
   # ── Skutečná instalace na čistém systému ───────────────────────────
   # Tohle je ta úloha, která by chytila chyby jako chybějící INSTALL_LOCK
@@ -86,9 +86,9 @@ jobs:
           # docker compose ověřit, že se soubor přeloží. Chybějící proměnná
           # (jako dřív SMTP_FROM u Caddy) tady spadne.
           cat > /tmp/test.env <<'ENV'
-          PRAUT_INSTANCE_ID=00000000-0000-0000-0000-000000000000
-          PRAUT_MODE=public
-          PRAUT_DOMAIN=test.example.ts.net
+          AGENTICDEV_INSTANCE_ID=00000000-0000-0000-0000-000000000000
+          AGENTICDEV_MODE=public
+          AGENTICDEV_DOMAIN=test.example.ts.net
           VPS_HOST=127.0.0.1
           TZ=Europe/Prague
           POSTGRES_PASSWORD=testtesttesttest
@@ -120,7 +120,7 @@ jobs:
           # Caddyfile se dřív rozbil na `email` bez argumentu. Necháme
           # samotného Caddyho, ať řekne, jestli je syntakticky v pořádku.
           docker run --rm \
-            -e PRAUT_DOMAIN=test.example.ts.net \
+            -e AGENTICDEV_DOMAIN=test.example.ts.net \
             -e SMTP_FROM=platform@example.com \
             -v "$PWD/vps/Caddyfile:/etc/caddy/Caddyfile:ro" \
             caddy:2-alpine caddy validate --config /etc/caddy/Caddyfile

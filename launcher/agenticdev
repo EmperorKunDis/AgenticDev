@@ -1,15 +1,15 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  praut — spouštěč pracovního prostředí
+#  agenticdev — spouštěč pracovního prostředí
 #
 #  Dvojklik na ikonu → vyber projekt → Claude Code je nastavený.
 #  VPS pošle subagenty, hooky, oprávnění a kontext podle fáze.
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-CFG_DIR="${PRAUT_HOME:-$HOME/.praut}"
+CFG_DIR="${AGENTICDEV_HOME:-$HOME/.agenticdev}"
 CFG="$CFG_DIR/config"
-WORK_ROOT="${PRAUT_WORK_ROOT:-$HOME/Praut}"
+WORK_ROOT="${AGENTICDEV_WORK_ROOT:-$HOME/AgenticDev}"
 
 B='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; D='\033[2m'; O='\033[0m'
 c()    { printf "${B}▸ %s${O}\n" "$*"; }
@@ -113,7 +113,7 @@ cmd_work() {
 
   # Git po síti dělá hostitel, ne pod. Agent tak nikdy nedrží přihlašovací
   # údaje k repozitáři — commituje lokálně, push proběhne po skončení.
-  local branch="praut/$(date +%Y%m%d-%H%M%S)"
+  local branch="agenticdev/$(date +%Y%m%d-%H%M%S)"
   git -C "$ws" checkout -q -B "$branch" 2>/dev/null || true
 
   c "Nastavuji pracovní prostředí"
@@ -125,18 +125,18 @@ cmd_work() {
   done
   chmod +x "$ws"/bin/* 2>/dev/null || true
 
-  mkdir -p "$ws/.praut/bin"
-  cat > "$ws/.praut/bin/praut-decision" <<DEC
+  mkdir -p "$ws/.agenticdev/bin"
+  cat > "$ws/.agenticdev/bin/agenticdev-decision" <<DEC
 #!/usr/bin/env bash
 curl -fsS -X POST "$CONTROL_PLANE/v1/workspace/$code/decision" \\
-  -H "Authorization: Bearer \$(cat /run/praut/token 2>/dev/null)" \\
+  -H "Authorization: Bearer \$(cat /run/agenticdev/token 2>/dev/null)" \\
   -H 'content-type: application/json' \\
   -d "\$(jq -nc --arg q "\$1" --arg ch "\$2" --arg r "\$3" \\
         '{question:\$q, chosen:\$ch, rationale:\$r}')" >/dev/null \\
   && echo "✓ zapsáno na VPS" || echo "✗ zápis selhal"
 DEC
-  chmod +x "$ws/.praut/bin/praut-decision"
-  grep -q '^\.praut/$' "$ws/.gitignore" 2>/dev/null || echo '.praut/' >> "$ws/.gitignore"
+  chmod +x "$ws/.agenticdev/bin/agenticdev-decision"
+  grep -q '^\.agenticdev/$' "$ws/.gitignore" 2>/dev/null || echo '.agenticdev/' >> "$ws/.gitignore"
 
   # ── Sandbox ────────────────────────────────────────────────────
   if ! command -v docker >/dev/null || ! docker info >/dev/null 2>&1; then
@@ -158,6 +158,11 @@ DEC
   local ctx="$CFG_DIR/ctx/$code"
   mkdir -p "$ctx"; chmod 700 "$CFG_DIR/ctx"
 
+  # Worktree rozdělaných úkolů. Leží u ostatních projektů na hostiteli,
+  # ne v podu — jinak by se s ním smazaly.
+  local trees="$WORK_ROOT/.agenticdev-trees"
+  mkdir -p "$trees"
+
   # Scope na zapisovatelné mounty. Repozitář jde dovnitř read-only,
   # tyhle cesty se přes něj přemountují rw. Co není tady, je pro agenta
   # jen ke čtení — a vynucuje to jádro.
@@ -167,7 +172,7 @@ DEC
     echo "  pod:"
     echo "    volumes:"
     echo "      - $ws/.git:/workspace/.git:rw"
-    echo "      - $ws/.praut:/workspace/.praut:rw"
+    echo "      - $ws/.agenticdev:/workspace/.agenticdev:rw"
     echo "$b" | jq -r '.scope[]?' | while read -r sc; do
       [[ -n "$sc" ]] || continue
       local top="${sc%%/*}"
@@ -194,12 +199,13 @@ DEC
         control_plane: $cp, branch: $br, deadline_ts: $dl}' > "$ctx/policy.json"
 
   cat > "$pod_dir/.env" <<ENVF
-PRAUT_PROJECT=$code
-PRAUT_REPO_DIR=$ws
-PRAUT_CTX_DIR=$ctx
-PRAUT_EGRESS_ALLOW=$allow
-PRAUT_UID=$(id -u)
-PRAUT_GID=$(id -g)
+AGENTICDEV_PROJECT=$code
+AGENTICDEV_REPO_DIR=$ws
+AGENTICDEV_CTX_DIR=$ctx
+AGENTICDEV_TREES_DIR=$trees
+AGENTICDEV_EGRESS_ALLOW=$allow
+AGENTICDEV_UID=$(id -u)
+AGENTICDEV_GID=$(id -g)
 ENVF
   chmod 600 "$pod_dir/.env"
 
@@ -209,7 +215,7 @@ ENVF
   printf "  fáze          ${B}%s${O}\n" "$phase"
   printf "  data          %s\n" "$dclass"
   printf "  smíš měnit    %s\n" "$(echo "$b" | jq -r '.scope | join(", ")')"
-  printf "  úkoly         %s ready ${D}(.praut/tasks.md)${O}\n" "$tasks"
+  printf "  úkoly         %s ready ${D}(.agenticdev/tasks.md)${O}\n" "$tasks"
   printf "  větev         %s\n" "$branch"
   printf "  ${D}──────────────────────────────────────────${O}\n\n"
 
@@ -223,10 +229,10 @@ ENVF
   ( cd "$pod_dir" && docker compose up -d --no-deps pod >/dev/null 2>&1 ) \
     || die "Pod nenaběhl."
   local cid; cid=$( cd "$pod_dir" && docker compose ps -q pod )
-  docker cp "$ctx/policy.json" "$cid:/run/praut/policy.json" >/dev/null
-  docker cp "$CFG_DIR/token"   "$cid:/run/praut/token"       >/dev/null 2>&1 || true
+  docker cp "$ctx/policy.json" "$cid:/run/agenticdev/policy.json" >/dev/null
+  docker cp "$CFG_DIR/token"   "$cid:/run/agenticdev/token"       >/dev/null 2>&1 || true
 
-  docker exec -it "$cid" python3 /opt/praut/harness.py || true
+  docker exec -it "$cid" python3 /opt/agenticdev/harness.py || true
 
   # ── Úklid ──────────────────────────────────────────────────────
   c "Uklízím"
@@ -271,14 +277,14 @@ case "${1:-work}" in
   board)  . "$CFG"; open "$CONTROL_PLANE" 2>/dev/null || echo "$CONTROL_PLANE" ;;
   login)  login && ok "přihlášeno" ;;
   *) cat <<'HELP'
-praut — pracovní prostředí Praut
+agenticdev — pracovní prostředí AgenticDev
 
-  praut work [projekt]   vyber projekt a začni pracovat
-  praut work X --phase delivery
+  agenticdev work [projekt]   vyber projekt a začni pracovat
+  agenticdev work X --phase delivery
                          pracuj v jiné fázi, ostatním se nic nemění
-  praut doctor           zkontroluje prostředí
-  praut board            otevře nástěnku
-  praut login            obnoví přihlášení
+  agenticdev doctor           zkontroluje prostředí
+  agenticdev board            otevře nástěnku
+  agenticdev login            obnoví přihlášení
 HELP
   ;;
 esac

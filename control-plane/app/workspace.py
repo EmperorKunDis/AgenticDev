@@ -167,11 +167,11 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
         files[".pi/settings.json"] = json.dumps(cur, indent=2, ensure_ascii=False)
 
     # ── stav z ledgeru do pracovního adresáře ──
-    files[".praut/phase"] = phase
-    files[".praut/scope"] = "\n".join(scope) + "\n"
-    files[".praut/project"] = code
+    files[".agenticdev/phase"] = phase
+    files[".agenticdev/scope"] = "\n".join(scope) + "\n"
+    files[".agenticdev/project"] = code
     if tasks:
-        files[".praut/tasks.md"] = "# Úkoly ve stavu ready\n\n" + "\n\n".join(
+        files[".agenticdev/tasks.md"] = "# Úkoly ve stavu ready\n\n" + "\n\n".join(
             f"## {t['title']}\n"
             f"- id: `{t['id']}`\n- druh: {t['kind']} | riziko: {t['risk']}\n"
             + (f"- spec: `{t['spec_ref']}`\n" if t["spec_ref"] else "")

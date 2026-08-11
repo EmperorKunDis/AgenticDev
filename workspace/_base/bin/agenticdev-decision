@@ -1,10 +1,10 @@
 #!/usr/bin/env bash
 # Pošle rozhodnutí na VPS jako precedent pro příští projekty.
 set -euo pipefail
-[[ $# -ge 2 ]] || { echo "použití: praut-decision \"otázka\" \"co jsme zvolili\" [\"proč\"]"; exit 1; }
-: "${PRAUT_CP:?PRAUT_CP není nastaveno}" "${PRAUT_PROJECT:?PRAUT_PROJECT není nastaveno}"
-TOK="${PRAUT_TOKEN:-$(cat "$HOME/.praut/token" 2>/dev/null)}"
-curl -fsS -X POST "$PRAUT_CP/v1/workspace/$PRAUT_PROJECT/decision" \
+[[ $# -ge 2 ]] || { echo "použití: agenticdev-decision \"otázka\" \"co jsme zvolili\" [\"proč\"]"; exit 1; }
+: "${AGENTICDEV_CP:?AGENTICDEV_CP není nastaveno}" "${AGENTICDEV_PROJECT:?AGENTICDEV_PROJECT není nastaveno}"
+TOK="${AGENTICDEV_TOKEN:-$(cat "$HOME/.agenticdev/token" 2>/dev/null)}"
+curl -fsS -X POST "$AGENTICDEV_CP/v1/workspace/$AGENTICDEV_PROJECT/decision" \
   -H "Authorization: Bearer $TOK" -H 'content-type: application/json' \
   -d "$(python3 -c 'import json,sys;print(json.dumps({"question":sys.argv[1],"chosen":sys.argv[2],"rationale":sys.argv[3] if len(sys.argv)>3 else ""}))' "$@")" \
   >/dev/null && echo "✓ zapsáno na VPS" || { echo "✗ zápis selhal" >&2; exit 1; }

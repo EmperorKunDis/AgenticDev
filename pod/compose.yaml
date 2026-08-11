@@ -11,10 +11,10 @@
 #     domény z allowlistu.
 #
 #  2. SCOPE. Repozitář se připojí read-only a povolené cesty se přes
-#     něj přemountují zapisovatelně (PRAUT_RW_MOUNTS). Zápis mimo
+#     něj přemountují zapisovatelně (AGENTICDEV_RW_MOUNTS). Zápis mimo
 #     scope tak selže na EROFS — vynucuje to jádro, ne slušnost agenta.
 # ═══════════════════════════════════════════════════════════════
-name: praut-${PRAUT_PROJECT}
+name: agenticdev-${AGENTICDEV_PROJECT}
 
 networks:
   # Žádná cesta ven. Kontejner na téhle síti se dostane jen na ostatní
@@ -31,10 +31,10 @@ services:
   egress:
     build:
       context: ./egress
-    image: praut/egress:${PRAUT_VERSION:-dev}
+    image: agenticdev/egress:${AGENTICDEV_VERSION:-dev}
     networks: [isolated, outside]
     environment:
-      PRAUT_EGRESS_ALLOW: ${PRAUT_EGRESS_ALLOW}
+      AGENTICDEV_EGRESS_ALLOW: ${AGENTICDEV_EGRESS_ALLOW}
     read_only: true
     tmpfs: [/tmp]
     security_opt: ["no-new-privileges:true"]
@@ -51,13 +51,13 @@ services:
   pod:
     build:
       context: .
-    image: praut/pod:${PRAUT_VERSION:-dev}
+    image: agenticdev/pod:${AGENTICDEV_VERSION:-dev}
     depends_on:
       egress: { condition: service_healthy }
     networks: [isolated]
 
     # Uid hostitele, aby soubory ve workspace patřily člověku a ne rootovi.
-    user: "${PRAUT_UID}:${PRAUT_GID}"
+    user: "${AGENTICDEV_UID}:${AGENTICDEV_GID}"
 
     environment:
       HTTP_PROXY:  http://egress:8888
@@ -66,18 +66,22 @@ services:
       https_proxy: http://egress:8888
       # Bez tohohle by npm a spol. proxy obcházely pro lokální adresy.
       NO_PROXY: localhost,127.0.0.1
+      AGENTICDEV_TREES: /trees
       TERM: ${TERM:-xterm-256color}
 
     volumes:
       # Repozitář read-only. Zapisovatelné cesty dopisuje launcher
       # do compose.override.yaml podle scope.
-      - ${PRAUT_REPO_DIR}:/workspace:ro
+      - ${AGENTICDEV_REPO_DIR}:/workspace:ro
       # Kontext z VPS. Read-only i kdyby si ho agent chtěl přepsat.
-      - ${PRAUT_CTX_DIR}:/ctx:ro
+      - ${AGENTICDEV_CTX_DIR}:/ctx:ro
+      # Worktree rozdělaných úkolů. Musí ležet na hostiteli, jinak by
+      # se s podem smazaly.
+      - ${AGENTICDEV_TREES_DIR}:/trees:rw
 
     # Tajemství na tmpfs — po zastavení podu nezůstanou na disku.
     tmpfs:
-      - /run/praut:mode=0700,uid=${PRAUT_UID},gid=${PRAUT_GID}
+      - /run/agenticdev:mode=0700,uid=${AGENTICDEV_UID},gid=${AGENTICDEV_GID}
       - /tmp:mode=1777
 
     security_opt: ["no-new-privileges:true"]

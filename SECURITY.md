@@ -41,7 +41,8 @@ We would rather tell you than have you find out. As of this release:
   capabilities dropped and no Docker socket, and the scope boundary is
   enforced by read-only mounts rather than by asking the agent nicely — but
   a container is not a hypervisor.
-- **Directors are not cryptographically signed** (`sha256: PENDING`).
+- **The orchestration layer (directors) described in the architecture
+  document is not implemented.**
 - **No server-side merge gate.** Tests run inside the pod, which the agent
   controls. Suitable for a small trusted team, not for untrusted contributors.
 - Join tokens do not expire and are shared per instance, not per person.
@@ -91,7 +92,8 @@ Radši ti to řekneme, než abys na to přišel sám. K tomuhle vydání:
 - **Útěk z kontejneru je mimo rozsah.** Pod běží bez rootu, se zahozenými
   capabilities a bez Docker socketu, a hranici scope vynucují read-only
   mounty, ne slušnost agenta — ale kontejner není hypervizor.
-- **Directors se kryptograficky nepodepisují** (`sha256: PENDING`).
+- **Orchestrační vrstva (directors) z architektonického rozboru není
+  implementovaná.**
 - **Není serverová brána před mergem.** Testy běží uvnitř podu, který řídí
   agent. Vhodné pro malý důvěryhodný tým, ne pro cizí přispěvatele.
 - Join tokeny nemají expiraci a jsou sdílené na instanci, ne na osobu.

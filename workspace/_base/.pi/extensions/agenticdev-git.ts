@@ -1,7 +1,7 @@
 /**
- * praut-git — automatika kolem gitu pro Pi.
+ * agenticdev-git — automatika kolem gitu pro Pi.
  *
- * Extension je záměrně tenká. Veškerou logiku dělá `bin/praut-git`,
+ * Extension je záměrně tenká. Veškerou logiku dělá `bin/agenticdev-git`,
  * deterministický shell nástroj. Extension jen volá ve správný čas.
  * Když se Pi API změní, opravuješ pár řádků, ne celý workflow.
  *
@@ -11,7 +11,7 @@
 import { execFileSync } from "node:child_process";
 import { existsSync } from "node:fs";
 
-const GIT = "bin/praut-git";
+const GIT = "bin/agenticdev-git";
 
 function run(args: string[]): string {
   try {
@@ -27,7 +27,7 @@ function branch(): string {
   } catch { return ""; }
 }
 
-export default function prautGit(api: any) {
+export default function agenticdevGit(api: any) {
   if (!existsSync(GIT)) return;
 
   // ── nástroje pro agenta ──

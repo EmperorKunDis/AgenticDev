@@ -10,7 +10,7 @@ body:
     id: version
     attributes:
       label: Version
-      description: Release tag, or output of `sha256sum praut-install-vps.sh`
+      description: Release tag, or output of `sha256sum agenticdev-install-vps.sh`
     validations: { required: true }
   - type: dropdown
     id: where
@@ -28,7 +28,7 @@ body:
     id: logs
     attributes:
       label: Relevant output
-      description: "Redact secrets first. Useful: `praut-ctl logs`, `/srv/praut/install.log`."
+      description: "Redact secrets first. Useful: `agenticdev-ctl logs`, `/srv/agenticdev/install.log`."
       render: shell
   - type: input
     id: os

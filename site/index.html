@@ -1,0 +1,449 @@
+<!DOCTYPE html>
+<html lang="cs">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgenticDev — agenti pod kontrolou serveru</title>
+<meta name="description" content="Self-hosted platforma pro AI vývojové agenty. O tom, co agent smí, rozhoduje server — ne notebook. Zdarma pro firmy do 1 M € obratu.">
+<link rel="icon" href="agenticdev.ico">
+<meta property="og:title" content="AgenticDev">
+<meta property="og:description" content="Self-hosted platforma pro AI vývojové agenty. O tom, co agent smí, rozhoduje server — ne notebook.">
+<meta property="og:image" content="og.png">
+<meta property="og:type" content="website">
+<style>
+  :root{
+    --bg:#0d0f14; --panel:#141821; --line:#242936; --line2:#333a4d;
+    --ink:#e9ecf1; --dim:#9299a8; --dim2:#6b7385;
+    --a1:#3B4EF0; --a2:#55178C; --soft:#7b89ff;
+    --ok:#3fb950; --warn:#d9a441;
+    --w:1080px;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0; background:var(--bg); color:var(--ink);
+    font:16px/1.65 ui-sans-serif,-apple-system,"Segoe UI",Roboto,Helvetica,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .en{display:none}
+  body.lang-en .cs{display:none}
+  body.lang-en .en{display:inline}
+  body.lang-en div.en,body.lang-en p.en,body.lang-en ul.en,
+  body.lang-en li.en,body.lang-en h1.en,body.lang-en h2.en,
+  body.lang-en h3.en,body.lang-en td.en,body.lang-en section.en{display:block}
+  body.lang-en li.en{display:list-item}
+
+  .wrap{max-width:var(--w); margin:0 auto; padding:0 24px}
+
+  /* ── hlavička ── */
+  header{
+    position:sticky; top:0; z-index:20; backdrop-filter:blur(12px);
+    background:rgba(13,15,20,.82); border-bottom:1px solid var(--line);
+  }
+  header .wrap{display:flex; align-items:center; gap:20px; height:62px}
+  header img{height:24px}
+  nav{margin-left:auto; display:flex; align-items:center; gap:22px}
+  nav a{color:var(--dim); text-decoration:none; font-size:14.5px}
+  nav a:hover{color:var(--ink)}
+  .lang{
+    border:1px solid var(--line2); border-radius:7px; overflow:hidden; display:flex;
+  }
+  .lang button{
+    background:none; border:0; color:var(--dim2); padding:5px 10px;
+    font:inherit; font-size:12.5px; cursor:pointer;
+  }
+  .lang button.on{background:var(--a1); color:#fff}
+  .btn{
+    display:inline-block; padding:11px 20px; border-radius:9px; font-weight:500;
+    text-decoration:none; font-size:15px; border:1px solid transparent;
+  }
+  .btn.p{background:linear-gradient(135deg,var(--a1),var(--a2)); color:#fff}
+  .btn.p:hover{filter:brightness(1.12)}
+  .btn.s{border-color:var(--line2); color:var(--ink)}
+  .btn.s:hover{border-color:var(--soft)}
+
+  /* ── hero ── */
+  .hero{padding:88px 0 72px; text-align:center}
+  .tag{
+    display:inline-flex; align-items:center; gap:8px; font-size:13px;
+    color:var(--warn); border:1px solid rgba(217,164,65,.3);
+    background:rgba(217,164,65,.07); padding:5px 13px; border-radius:99px;
+    margin-bottom:26px;
+  }
+  h1{
+    font-size:clamp(30px,5.2vw,50px); line-height:1.12; margin:0 0 22px;
+    letter-spacing:-1.4px; font-weight:600;
+  }
+  h1 .g{
+    background:linear-gradient(120deg,var(--soft),#b57bff);
+    -webkit-background-clip:text; background-clip:text; color:transparent;
+  }
+  .lead{
+    font-size:clamp(16px,2vw,19px); color:var(--dim); max-width:640px;
+    margin:0 auto 34px;
+  }
+  .cta{display:flex; gap:12px; justify-content:center; flex-wrap:wrap}
+
+  /* ── sekce ── */
+  section{padding:76px 0; border-top:1px solid var(--line)}
+  h2{
+    font-size:clamp(23px,3.4vw,32px); letter-spacing:-.7px; margin:0 0 14px;
+    font-weight:600;
+  }
+  .sub{color:var(--dim); max-width:620px; margin:0 0 40px; font-size:16.5px}
+
+  .grid{display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(250px,1fr))}
+  .card{
+    background:var(--panel); border:1px solid var(--line); border-radius:13px;
+    padding:26px;
+  }
+  .card h3{margin:0 0 9px; font-size:16.5px; font-weight:600}
+  .card p{margin:0; color:var(--dim); font-size:14.7px; line-height:1.6}
+  .num{
+    font:600 12px/1 ui-monospace,monospace; color:var(--soft);
+    letter-spacing:1px; display:block; margin-bottom:13px;
+  }
+
+  /* ── schéma ── */
+  .box{
+    background:#0a0c11; border:1px solid var(--line); border-radius:13px;
+    padding:26px; overflow-x:auto;
+  }
+  pre{
+    margin:0; font:13.5px/1.75 ui-monospace,SFMono-Regular,Menlo,monospace;
+    color:#aeb6c7; white-space:pre;
+  }
+  pre b{color:var(--soft); font-weight:400}
+  pre i{color:var(--ok); font-style:normal}
+
+  /* ── licence ── */
+  .price{display:grid; gap:18px; grid-template-columns:repeat(auto-fit,minmax(270px,1fr))}
+  .price .card{display:flex; flex-direction:column}
+  .price .card.hi{border-color:var(--soft)}
+  .amt{font-size:26px; font-weight:600; margin:6px 0 4px; letter-spacing:-.6px}
+  .price ul{list-style:none; padding:0; margin:16px 0 0; font-size:14.5px; color:var(--dim)}
+  .price li{padding:5px 0 5px 22px; position:relative}
+  .price li::before{content:"✓"; position:absolute; left:0; color:var(--ok)}
+
+  /* ── formulář ── */
+  .signup{
+    background:linear-gradient(135deg,rgba(59,78,240,.14),rgba(85,23,140,.14));
+    border:1px solid var(--line2); border-radius:16px; padding:44px 32px;
+    text-align:center;
+  }
+  form{max-width:460px; margin:26px auto 0}
+  .row{display:flex; gap:9px; flex-wrap:wrap}
+  input[type=email]{
+    flex:1; min-width:210px; padding:12px 15px; border-radius:9px; font:inherit;
+    font-size:15px; background:#0a0c11; border:1px solid var(--line2); color:var(--ink);
+  }
+  input[type=email]:focus{outline:none; border-color:var(--soft)}
+  form button{
+    padding:12px 22px; border:0; border-radius:9px; cursor:pointer;
+    background:linear-gradient(135deg,var(--a1),var(--a2)); color:#fff;
+    font:inherit; font-size:15px; font-weight:500;
+  }
+  form button:hover{filter:brightness(1.12)}
+  .consent{
+    display:flex; gap:9px; align-items:flex-start; margin-top:15px;
+    font-size:12.8px; color:var(--dim2); text-align:left; line-height:1.55;
+  }
+  .consent input{margin-top:3px; accent-color:var(--a1); flex-shrink:0}
+  .consent a{color:var(--dim)}
+  .msg{margin-top:14px; font-size:14px; min-height:20px}
+
+  /* ── patička ── */
+  footer{border-top:1px solid var(--line); padding:40px 0; color:var(--dim2); font-size:13.5px}
+  footer .wrap{display:flex; gap:20px; flex-wrap:wrap; align-items:center}
+  footer a{color:var(--dim); text-decoration:none}
+  footer a:hover{color:var(--ink)}
+  footer .sp{margin-left:auto}
+  .small{font-size:13.5px; color:var(--dim2)}
+  code{
+    background:#0a0c11; border:1px solid var(--line); padding:1px 6px;
+    border-radius:5px; font-size:13px;
+  }
+  @media(max-width:640px){
+    nav a.hide{display:none}
+    .hero{padding:56px 0 48px}
+    section{padding:56px 0}
+  }
+</style>
+</head>
+<body class="lang-cs">
+
+<header>
+  <div class="wrap">
+    <a href="#"><img src="logo.svg" alt="AgenticDev"></a>
+    <nav>
+      <a href="#jak" class="hide"><span class="cs">Jak to funguje</span><span class="en">How it works</span></a>
+      <a href="#licence" class="hide"><span class="cs">Licence</span><span class="en">Licence</span></a>
+      <a href="https://github.com/Praut-Startup-Support/AgenticDev">GitHub</a>
+      <div class="lang">
+        <button data-l="cs" class="on">CS</button><button data-l="en">EN</button>
+      </div>
+    </nav>
+  </div>
+</header>
+
+<div class="wrap hero">
+  <div class="tag">
+    <span class="cs">Alfa — připravujeme vydání</span>
+    <span class="en">Alpha — preparing for release</span>
+  </div>
+  <h1>
+    <span class="cs">O tom, co agent smí,<br>rozhoduje <span class="g">server</span>. Ne notebook.</span>
+    <span class="en">The <span class="g">server</span> decides<br>what the agent may do. Not the laptop.</span>
+  </h1>
+  <p class="lead">
+    <span class="cs">Vlastní platforma pro AI vývojové agenty. Oprávnění plynou z fáze
+      projektu, agent běží v izolovaném kontejneru a každé rozhodnutí končí
+      v auditovatelné evidenci.</span>
+    <span class="en">Self-hosted platform for AI coding agents. Permissions come from the
+      project phase, the agent runs in an isolated container, and every decision
+      lands in an auditable ledger.</span>
+  </p>
+  <div class="cta">
+    <a href="#zajem" class="btn p"><span class="cs">Chci vědět o vydání</span><span class="en">Notify me at launch</span></a>
+    <a href="https://github.com/Praut-Startup-Support/AgenticDev" class="btn s">
+      <span class="cs">Zdrojový kód</span><span class="en">Source code</span></a>
+  </div>
+</div>
+
+<section id="proc">
+  <div class="wrap">
+    <h2><span class="cs">Proč vůbec</span><span class="en">Why this exists</span></h2>
+    <p class="sub">
+      <span class="cs">Většina nástrojů posadí agenta na notebook vývojáře a doufá.
+        Tenhle to obrací.</span>
+      <span class="en">Most setups put the agent on the developer's laptop and hope
+        for the best. This one inverts that.</span>
+    </p>
+    <div class="grid">
+      <div class="card">
+        <span class="num">01</span>
+        <h3><span class="cs">Oprávnění z fáze, ne z osoby</span><span class="en">Permissions from the phase</span></h3>
+        <p><span class="cs">V průzkumné fázi nikdo nesahá na zdrojáky — ne proto, že to
+          zakazuje směrnice, ale protože je adresář připojený jen ke čtení.</span>
+          <span class="en">In discovery nobody touches source — not because a policy says
+          so, but because the directory is mounted read-only.</span></p>
+      </div>
+      <div class="card">
+        <span class="num">02</span>
+        <h3><span class="cs">Agent v kleci</span><span class="en">The agent is fenced in</span></h3>
+        <p><span class="cs">Běží v kontejneru bez cesty do internetu. Ven se dostane jen
+          přes proxy, která pustí domény, které jsi vyjmenoval.</span>
+          <span class="en">It runs in a container with no route out. The only path is a
+          proxy that allows the domains you listed.</span></p>
+      </div>
+      <div class="card">
+        <span class="num">03</span>
+        <h3><span class="cs">Stopa, která zůstane</span><span class="en">A trail that stays</span></h3>
+        <p><span class="cs">Rozhodnutí, běhy i útrata padají do databáze s řetězeným
+          hashem. Ne do něčí historie chatu.</span>
+          <span class="en">Decisions, runs, and spend land in a database with a hash
+          chain. Not in someone's chat history.</span></p>
+      </div>
+      <div class="card">
+        <span class="num">04</span>
+        <h3><span class="cs">Nikdo se to nedozví</span><span class="en">Nobody finds out</span></h3>
+        <p><span class="cs">Jedna firma, jeden server, žádná centrální služba. Že sis to
+          nainstaloval, se nedozvíme ani my.</span>
+          <span class="en">One company, one server, no central service. We never learn
+          that you installed it.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="jak">
+  <div class="wrap">
+    <h2><span class="cs">Jak vypadá izolace</span><span class="en">What the isolation looks like</span></h2>
+    <p class="sub">
+      <span class="cs">Hranici drží jádro operačního systému, ne slušnost agenta.</span>
+      <span class="en">The boundary is held by the kernel, not by the agent behaving.</span>
+    </p>
+    <div class="box"><pre>
+   <b>egress</b> ──── allowlist ────► <i>internet</i>
+      ▲
+      │  jediná cesta ven / the only way out
+      │
+    <b>pod</b> ── bez routy ven · non-root · žádný docker socket
+      │
+      ├── <b>/workspace</b>   repozitář read-only, scope cesty rw
+      ├── <b>/ctx</b>         kontext ze serveru, read-only
+      └── <b>/run/agenticdev</b>   token a policy na tmpfs, po skončení nic</pre>
+    </div>
+    <p class="small" style="margin-top:20px">
+      <span class="cs">Git po síti dělá hostitel — agent nikdy nedrží přihlašovací údaje
+        k repozitáři. Zápis mimo povolený rozsah skončí chybou souborového systému.</span>
+      <span class="en">Network git operations stay on the host — the agent never holds
+        credentials to your repository. A write outside scope fails at the filesystem.</span>
+    </p>
+  </div>
+</section>
+
+<section id="komu">
+  <div class="wrap">
+    <h2><span class="cs">Pro koho to je</span><span class="en">Who it is for</span></h2>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="cs">Malá softwarová firma</span><span class="en">Small software company</span></h3>
+        <p><span class="cs">Tři až dvacet lidí, práce pro klienty, potřeba vědět, kdo na
+          čem dělal a proč se to rozhodlo takhle.</span>
+          <span class="en">Three to twenty people, client work, and a need to know who
+          did what and why it was decided that way.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Citlivá data</span><span class="en">Sensitive data</span></h3>
+        <p><span class="cs">Projekt označíš jako chráněný a cloudové modely se pro něj
+          tvrdě zakážou. Ne varováním — zákazem.</span>
+          <span class="en">Mark a project restricted and cloud models are hard-blocked
+          for it. Not a warning — a refusal.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Kdo nechce cizí SaaS</span><span class="en">No third-party SaaS</span></h3>
+        <p><span class="cs">Kód klientů zůstává na tvém serveru. Žádná registrace,
+          žádná telemetrie, žádný účet u nás.</span>
+          <span class="en">Client code stays on your server. No sign-up, no telemetry,
+          no account with us.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="licence">
+  <div class="wrap">
+    <h2><span class="cs">Licence</span><span class="en">Licensing</span></h2>
+    <p class="sub">
+      <span class="cs">Zdroják je veřejný. Malé firmy zdarma, velké platí. Za čtyři roky
+        se každá verze sama uvolní jako Apache-2.0.</span>
+      <span class="en">The source is public. Small companies free, larger ones pay.
+        Every version converts to Apache-2.0 four years after release.</span>
+    </p>
+    <div class="price">
+      <div class="card hi">
+        <h3><span class="cs">Do 1 000 000 € obratu</span><span class="en">Under €1,000,000 revenue</span></h3>
+        <div class="amt"><span class="cs">Zdarma</span><span class="en">Free</span></div>
+        <p class="small"><span class="cs">Včetně ostrého provozu</span><span class="en">Including production</span></p>
+        <ul>
+          <li><span class="cs">Neomezeně strojů a projektů</span><span class="en">Unlimited machines and projects</span></li>
+          <li><span class="cs">Celý zdrojový kód</span><span class="en">Full source code</span></li>
+          <li><span class="cs">Vyzkoušení a vývoj vždy zdarma</span><span class="en">Evaluation and dev always free</span></li>
+        </ul>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Nad 1 000 000 € obratu</span><span class="en">Over €1,000,000 revenue</span></h3>
+        <div class="amt"><span class="cs">Domluvou</span><span class="en">Let's talk</span></div>
+        <p class="small"><span class="cs">Komerční licence</span><span class="en">Commercial licence</span></p>
+        <ul>
+          <li><span class="cs">Stejný software</span><span class="en">The same software</span></li>
+          <li><span class="cs">Cena podle velikosti</span><span class="en">Priced by size</span></li>
+          <li><span class="cs">Napiš na svanda@praut.cz</span><span class="en">Write to svanda@praut.cz</span></li>
+        </ul>
+      </div>
+    </div>
+    <p class="small" style="margin-top:22px">
+      <span class="cs">Business Source License 1.1. Není to open source podle definice OSI —
+        je to source-available. <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/LICENSE-FAQ.md" style="color:var(--soft)">Rozdíl vysvětlujeme tady</a>.</span>
+      <span class="en">Business Source License 1.1. Not OSI open source — source-available.
+        <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/LICENSE-FAQ.md" style="color:var(--soft)">We explain the difference here</a>.</span>
+    </p>
+  </div>
+</section>
+
+<section id="zajem">
+  <div class="wrap">
+    <div class="signup">
+      <h2><span class="cs">Dáme vědět, až to bude hotové</span><span class="en">We will tell you when it is ready</span></h2>
+      <p class="sub" style="margin:0 auto; text-align:center">
+        <span class="cs">Jeden e-mail, až vyjde první verze. Nic dalšího posílat nebudeme.</span>
+        <span class="en">One email when the first release lands. Nothing else.</span>
+      </p>
+
+      <form id="f" action="https://formspree.io/f/DOPLN_FORM_ID" method="POST">
+        <div class="row">
+          <input type="email" name="email" required autocomplete="email"
+                 placeholder="jmeno@firma.cz">
+          <button type="submit"><span class="cs">Odebírat</span><span class="en">Notify me</span></button>
+        </div>
+        <label class="consent">
+          <input type="checkbox" name="souhlas" required>
+          <span>
+            <span class="cs">Souhlasím, aby Praut s.r.o. použil moji adresu k jedinému
+              účelu — oznámit vydání AgenticDev. Souhlas můžu kdykoli odvolat na
+              svanda@praut.cz a adresa bude smazána.</span>
+            <span class="en">I agree that Praut s.r.o. may use my address for one purpose —
+              to announce the AgenticDev release. I can withdraw consent any time at
+              svanda@praut.cz and the address will be deleted.</span>
+          </span>
+        </label>
+        <div class="msg" id="m"></div>
+      </form>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <span>© 2026 Praut s.r.o.</span>
+    <a href="https://github.com/Praut-Startup-Support/AgenticDev">GitHub</a>
+    <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/LICENSE">
+      <span class="cs">Licence</span><span class="en">Licence</span></a>
+    <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/SECURITY.md">
+      <span class="cs">Bezpečnost</span><span class="en">Security</span></a>
+    <a href="mailto:svanda@praut.cz">svanda@praut.cz</a>
+    <span class="sp small">
+      <span class="cs">Adresy neprodáváme ani nepředáváme.</span>
+      <span class="en">We do not sell or share addresses.</span>
+    </span>
+  </div>
+</footer>
+
+<script>
+  const body = document.body, msg = document.getElementById('m'), f = document.getElementById('f');
+
+  function setLang(l){
+    body.className = 'lang-' + l;
+    document.documentElement.lang = l;
+    document.querySelectorAll('.lang button').forEach(b =>
+      b.classList.toggle('on', b.dataset.l === l));
+    try { localStorage.setItem('lang', l); } catch(e) {}
+  }
+  document.querySelectorAll('.lang button').forEach(b =>
+    b.onclick = () => setLang(b.dataset.l));
+
+  // Prohlížeč napoví, ale uložená volba má přednost.
+  let l = null;
+  try { l = localStorage.getItem('lang'); } catch(e) {}
+  if (!l) l = (navigator.language || '').toLowerCase().startsWith('cs') ? 'cs' : 'en';
+  setLang(l);
+
+  const T = {
+    cs: { wait:'odesílám…', ok:'Hotovo. Ozveme se, až to vyjde.',
+          err:'Nepovedlo se to. Zkus to znovu, nebo napiš na svanda@praut.cz.' },
+    en: { wait:'sending…', ok:'Done. We will be in touch at launch.',
+          err:'That did not work. Try again, or write to svanda@praut.cz.' }
+  };
+
+  f.onsubmit = async e => {
+    e.preventDefault();
+    const t = T[body.classList.contains('lang-en') ? 'en' : 'cs'];
+    msg.style.color = 'var(--dim)';
+    msg.textContent = t.wait;
+    try {
+      const r = await fetch(f.action, {
+        method: 'POST', body: new FormData(f), headers: { Accept: 'application/json' }
+      });
+      if (!r.ok) throw new Error();
+      msg.style.color = 'var(--ok)';
+      msg.textContent = t.ok;
+      f.reset();
+    } catch (err) {
+      msg.style.color = '#f85149';
+      msg.textContent = t.err;
+    }
+  };
+</script>
+</body>
+</html>

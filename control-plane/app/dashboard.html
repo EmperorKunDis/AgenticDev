@@ -3,7 +3,7 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Praut Platform</title>
+<title>AgenticDev</title>
 <link rel="icon" href="/favicon.ico">
 <style>
   :root{
@@ -89,20 +89,20 @@
 <!-- ══════════ LOGIN ══════════ -->
 <div id="login">
   <form onsubmit="doLogin(event)">
-    <img src="/logo.svg" alt="Praut" style="height:30px;display:block;margin:0 auto 18px"
+    <img src="/logo.svg" alt="AgenticDev" style="height:30px;display:block;margin:0 auto 18px"
          onerror="this.style.display='none'">
-    <h1>Praut Platform</h1>
+    <h1>AgenticDev</h1>
     <div id="loginErr"></div>
     <input id="pw" type="password" placeholder="heslo do nástěnky" autofocus>
     <button style="width:100%;margin-top:12px">Vstoupit</button>
-    <p class="hint">Heslo ti vypsal instalační skript. Znovu ho zobrazíš na VPS příkazem <code>sudo praut-info</code>.</p>
+    <p class="hint">Heslo ti vypsal instalační skript. Znovu ho zobrazíš na VPS příkazem <code>sudo agenticdev-info</code>.</p>
   </form>
 </div>
 
 <!-- ══════════ APP ══════════ -->
 <div id="app" style="display:none">
 <header><div class="bar">
-  <span class="logo">Praut</span>
+  <span class="logo">AgenticDev</span>
   <nav>
     <a data-t="prehled" class="on" onclick="tab('prehled')">Přehled</a>
     <a data-t="rozhodnuti" onclick="tab('rozhodnuti')">Rozhodnutí <span id="decBadge"></span></a>
@@ -205,7 +205,7 @@
         <div><label>Měsíční rozpočet (Kč)</label><input id="pBudget" type="number" value="5000"></div>
       </div>
       <label>Existující repozitář — nepovinné</label>
-      <input id="pImport" placeholder="https://github.com/praut/montexbau.git" class="mono">
+      <input id="pImport" placeholder="https://github.com/agenticdev/montexbau.git" class="mono">
       <p class="hint">Když vyplníš, naklonuje se i s historií a větvemi. Jinak vznikne prázdné repo s kostrou <code>prd/</code>.</p>
       <div class="row end" style="margin-top:18px"><button onclick="newProject()">Založit projekt</button></div>
     </div>
@@ -220,7 +220,7 @@
     <div class="panel">
       <p style="margin-bottom:10px">Pusť na tom Macu tenhle jeden řádek:</p>
       <pre id="joinCmd">–</pre>
-      <p class="hint">Po doběhnutí má člověk na ploše ikonu <strong>Praut — Začít práci</strong>. Nic dalšího nepotřebuje.</p>
+      <p class="hint">Po doběhnutí má člověk na ploše ikonu <strong>AgenticDev — Začít práci</strong>. Nic dalšího nepotřebuje.</p>
     </div>
 
     <h2>Pracovní stanice</h2>
@@ -245,7 +245,7 @@
     <h2>Jen ke čtení</h2>
     <div class="panel">
       <p class="hint" style="margin-bottom:10px">Tyhle hodnoty se čtou při startu.
-      Mění se v <code>/srv/praut/config/.env</code> a pak <code>praut-ctl up</code>.</p>
+      Mění se v <code>/srv/agenticdev/config/.env</code> a pak <code>agenticdev-ctl up</code>.</p>
       <div id="setRO"></div>
     </div>
   </section>

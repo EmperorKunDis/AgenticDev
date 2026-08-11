@@ -72,7 +72,7 @@ EDITABLE: dict[str, tuple[str, str, str, bool, str]] = {
 
 # Jen ke čtení — mění se v .env a potřebují restart.
 READONLY = [
-    "PRAUT_INSTANCE_ID", "PRAUT_DOMAIN", "PRAUT_MODE", "VPS_HOST",
+    "AGENTICDEV_INSTANCE_ID", "AGENTICDEV_DOMAIN", "AGENTICDEV_MODE", "VPS_HOST",
     "CONTROL_PLANE_URL", "JOIN_URL", "FORGEJO_URL", "HARNESS_IMAGE",
 ]
 

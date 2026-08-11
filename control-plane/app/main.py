@@ -1,5 +1,5 @@
 """
-Praut Platform — Control Plane (L2)
+AgenticDev — Control Plane (L2)
 
 Vydává podepsané work ordery, drží leases, přijímá idempotentní write-back.
 Záměrně bez ORM: schéma je zdroj pravdy, ne Python třídy.
@@ -27,7 +27,7 @@ _SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(
     base64.b64decode(os.environ["WO_SIGNING_KEY_B64"])
 )
 
-app = FastAPI(title="Praut Control Plane", version="0.1.0")
+app = FastAPI(title="AgenticDev Control Plane", version="0.1.0")
 
 
 def db():
@@ -74,7 +74,7 @@ def auth_device(body: DeviceAuth):
         if not ws:
             raise HTTPException(
                 403,
-                "neznámý device key — zaregistruj stanici přes `praut admin register-ws`",
+                "neznámý device key — zaregistruj stanici přes `agenticdev admin register-ws`",
             )
         if ws["revoked_at"]:
             raise HTTPException(403, "stanice revokována")
@@ -392,12 +392,12 @@ def identity():
     ověří, že mluví s tím VPS, ke kterému byl vygenerován — a ne s jiným.
     Obsahuje jen veřejné údaje (náhodné ID + veřejný klíč).
     """
-    iid = os.environ.get("PRAUT_INSTANCE_ID", "")
+    iid = os.environ.get("AGENTICDEV_INSTANCE_ID", "")
     vk = os.environ.get("WO_VERIFY_KEY_B64", "")
     fp = hashlib.sha256(f"{iid}\n{vk}".encode()).hexdigest()
     return {
         "instance_id": iid,
-        "domain": os.environ.get("PRAUT_DOMAIN", ""),
+        "domain": os.environ.get("AGENTICDEV_DOMAIN", ""),
         "verify_key": vk,
         "fingerprint": f"sha256:{fp}",
         "api": app.version,
@@ -442,7 +442,7 @@ def install_mac():
     f = _REPO / "install-mac.sh"
     if not f.exists():
         raise HTTPException(404, "install-mac.sh není nasazený")
-    dom = os.environ.get("PRAUT_DOMAIN", "")
+    dom = os.environ.get("AGENTICDEV_DOMAIN", "")
     url = os.environ.get("CONTROL_PLANE_URL") or (
         f"https://{dom}" if dom else "http://localhost:8080")
     return PlainTextResponse(f.read_text().replace("__CONTROL_PLANE__", url),
@@ -463,7 +463,7 @@ def _serve_installer(name: str, mime: str):
     f = _REPO / name
     if not f.exists():
         raise HTTPException(404, f"{name} není nasazený")
-    dom = os.environ.get("PRAUT_DOMAIN", "")
+    dom = os.environ.get("AGENTICDEV_DOMAIN", "")
     url = os.environ.get("CONTROL_PLANE_URL") or (
         f"https://{dom}" if dom else "http://localhost:8080")
     return PlainTextResponse(f.read_text().replace("__CONTROL_PLANE__", url),
@@ -490,9 +490,9 @@ def pod_file(path: str):
     return PlainTextResponse(f.read_text(), media_type=_POD_FILES[path])
 
 
-@app.get("/linux/praut-launch", include_in_schema=False)
+@app.get("/linux/agenticdev-launch", include_in_schema=False)
 def linux_launch():
-    f = _REPO / "linux" / "praut-launch"
+    f = _REPO / "linux" / "agenticdev-launch"
     if not f.exists():
         raise HTTPException(404)
     return PlainTextResponse(f.read_text(), media_type="text/x-shellscript")
@@ -506,22 +506,22 @@ def ghostty_config():
     return PlainTextResponse(f.read_text(), media_type="text/plain")
 
 
-@app.get("/praut-app.tar.gz", include_in_schema=False)
-def praut_app():
-    """Praut.app zabalená za běhu — instalátor ji rozbalí do /Applications."""
+@app.get("/agenticdev-app.tar.gz", include_in_schema=False)
+def agenticdev_app():
+    """AgenticDev.app zabalená za běhu — instalátor ji rozbalí do /Applications."""
     import io, tarfile
-    src = _REPO / "mac" / "Praut.app"
+    src = _REPO / "mac" / "AgenticDev.app"
     if not src.exists():
-        raise HTTPException(404, "Praut.app není nasazená")
+        raise HTTPException(404, "AgenticDev.app není nasazená")
     buf = io.BytesIO()
     with tarfile.open(fileobj=buf, mode="w:gz") as t:
-        t.add(src, arcname="Praut.app")
+        t.add(src, arcname="AgenticDev.app")
     return Response(content=buf.getvalue(), media_type="application/gzip")
 
 
-@app.get("/praut", include_in_schema=False)
+@app.get("/agenticdev", include_in_schema=False)
 def launcher():
-    f = _REPO / "launcher" / "praut"
+    f = _REPO / "launcher" / "agenticdev"
     if not f.exists():
         raise HTTPException(404, "launcher není nasazený")
     return PlainTextResponse(f.read_text(), media_type="text/x-shellscript")
@@ -542,7 +542,7 @@ _BRAND_TYPES = {
 def brand(name: str):
     """
     logo.svg (wordmark) · mark.svg (značka) · icon.svg (dlaždice)
-    praut.ico (Windows) · png/icon-<velikost>.png
+    agenticdev.ico (Windows) · png/icon-<velikost>.png
     """
     # Bez tohohle by šlo přes ../ číst cokoli z /repo.
     p = (_REPO / "brand" / name).resolve()
@@ -562,7 +562,7 @@ def logo():
 
 @app.get("/favicon.ico", include_in_schema=False)
 def favicon():
-    f = _REPO / "brand" / "praut.ico"
+    f = _REPO / "brand" / "agenticdev.ico"
     if not f.exists():
         raise HTTPException(404)
     return FileResponse(f, media_type="image/x-icon")

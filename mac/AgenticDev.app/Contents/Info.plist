@@ -2,13 +2,13 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-  <key>CFBundleName</key>            <string>Praut</string>
-  <key>CFBundleDisplayName</key>     <string>Praut</string>
-  <key>CFBundleIdentifier</key>      <string>cz.praut.workspace</string>
+  <key>CFBundleName</key>            <string>AgenticDev</string>
+  <key>CFBundleDisplayName</key>     <string>AgenticDev</string>
+  <key>CFBundleIdentifier</key>      <string>cz.agenticdev.workspace</string>
   <key>CFBundleVersion</key>         <string>1.0</string>
   <key>CFBundleShortVersionString</key><string>1.0</string>
   <key>CFBundlePackageType</key>     <string>APPL</string>
-  <key>CFBundleExecutable</key>      <string>Praut</string>
+  <key>CFBundleExecutable</key>      <string>AgenticDev</string>
   <key>CFBundleIconFile</key>        <string>AppIcon</string>
   <key>LSMinimumSystemVersion</key>  <string>12.0</string>
   <key>LSUIElement</key>             <false/>

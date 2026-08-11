@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  Praut Platform — VPS stack (F0 + F2)
+#  AgenticDev — VPS stack (F0 + F2)
 #  Publikuje se JEN na tailnet. Nikdy na 0.0.0.0.
-#  Nasazení: docker compose --env-file /srv/praut/config/.env up -d
+#  Nasazení: docker compose --env-file /srv/agenticdev/config/.env up -d
 # ═══════════════════════════════════════════════════════════════
-name: praut
+name: agenticdev
 
 x-restart: &restart
   restart: unless-stopped
@@ -25,12 +25,12 @@ services:
       - "80:80"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
-      - /srv/praut/data/caddy:/data
+      - /srv/agenticdev/data/caddy:/data
       # Bez tohohle socketu neumí Caddy vyzvednout TLS certifikát pro
       # .ts.net doménu a spadne zpátky na Let's Encrypt → NXDOMAIN.
       - /var/run/tailscale/tailscaled.sock:/var/run/tailscale/tailscaled.sock
     environment:
-      PRAUT_DOMAIN: ${PRAUT_DOMAIN}
+      AGENTICDEV_DOMAIN: ${AGENTICDEV_DOMAIN}
       # Caddyfile má `email {$SMTP_FROM}` — když se sem proměnná nepředá,
       # Caddy se ani nenastartuje (wrong argument count).
       SMTP_FROM: ${SMTP_FROM}
@@ -46,15 +46,15 @@ services:
     ports:
       - "${VPS_HOST}:5432:5432"
     environment:
-      POSTGRES_USER: praut
+      POSTGRES_USER: agenticdev
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?chybi POSTGRES_PASSWORD}
-      POSTGRES_DB: praut
+      POSTGRES_DB: agenticdev
       TZ: ${TZ:-Europe/Prague}
     volumes:
-      - /srv/praut/data/postgres:/var/lib/postgresql/data
+      - /srv/agenticdev/data/postgres:/var/lib/postgresql/data
       - ./sql:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U praut -d praut"]
+      test: ["CMD-SHELL", "pg_isready -U agenticdev -d agenticdev"]
       interval: 10s
       timeout: 5s
       retries: 10
@@ -69,10 +69,10 @@ services:
       FORGEJO__database__DB_TYPE: postgres
       FORGEJO__database__HOST: postgres:5432
       FORGEJO__database__NAME: forgejo
-      FORGEJO__database__USER: praut
+      FORGEJO__database__USER: agenticdev
       FORGEJO__database__PASSWD: ${POSTGRES_PASSWORD}
-      FORGEJO__server__DOMAIN: ${PRAUT_DOMAIN}
-      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-https://${PRAUT_DOMAIN}/git/}
+      FORGEJO__server__DOMAIN: ${AGENTICDEV_DOMAIN}
+      FORGEJO__server__ROOT_URL: ${FORGEJO_ROOT_URL:-https://${AGENTICDEV_DOMAIN}/git/}
       FORGEJO__server__SSH_PORT: 2222
       FORGEJO__server__SSH_DOMAIN: ${VPS_HOST}
       FORGEJO__service__DISABLE_REGISTRATION: "true"
@@ -93,7 +93,7 @@ services:
       - "${VPS_HOST}:2222:22"
       - "${VPS_HOST}:3000:3000"    # web jen na tailnetu (záloha, když neběží Caddy)
     volumes:
-      - /srv/praut/data/forgejo:/data
+      - /srv/agenticdev/data/forgejo:/data
     depends_on:
       postgres: { condition: service_healthy }
 
@@ -103,13 +103,13 @@ services:
     image: minio/minio:${MINIO_TAG}
     command: server /data --console-address ":9001"
     environment:
-      MINIO_ROOT_USER: praut
+      MINIO_ROOT_USER: agenticdev
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:?chybi MINIO_ROOT_PASSWORD}
     ports:
       - "${VPS_HOST}:9000:9000"
       - "${VPS_HOST}:9001:9001"
     volumes:
-      - /srv/praut/data/minio:/data
+      - /srv/agenticdev/data/minio:/data
     healthcheck:
       test: ["CMD", "mc", "ready", "local"]
       interval: 15s
@@ -120,13 +120,13 @@ services:
   control-plane:
     <<: [*restart, *logging]
     build: ../control-plane
-    image: praut/control-plane:dev
+    image: agenticdev/control-plane:dev
     environment:
-      DATABASE_URL: postgresql://praut:${POSTGRES_PASSWORD}@postgres:5432/praut
+      DATABASE_URL: postgresql://agenticdev:${POSTGRES_PASSWORD}@postgres:5432/agenticdev
       JWT_SECRET: ${JWT_SECRET:?chybi JWT_SECRET}
       WO_SIGNING_KEY_B64: ${WO_SIGNING_KEY_B64:?chybi WO_SIGNING_KEY_B64}
       S3_ENDPOINT: http://minio:9000
-      S3_ACCESS_KEY: praut
+      S3_ACCESS_KEY: agenticdev
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       GIT_BASE: ssh://git@${VPS_HOST}:2222
       DEFAULT_MODEL: ${DEFAULT_MODEL:-gpt-5.5}
@@ -138,9 +138,9 @@ services:
       FORGEJO_URL: http://forgejo:3000
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
       GIT_SSH_BASE: ssh://git@${VPS_HOST}:2222
-      HARNESS_IMAGE: ${HARNESS_IMAGE:-praut/harness:dev}
-      PRAUT_DOMAIN: ${PRAUT_DOMAIN:-}
-      PRAUT_INSTANCE_ID: ${PRAUT_INSTANCE_ID:-}
+      HARNESS_IMAGE: ${HARNESS_IMAGE:-agenticdev/harness:dev}
+      AGENTICDEV_DOMAIN: ${AGENTICDEV_DOMAIN:-}
+      AGENTICDEV_INSTANCE_ID: ${AGENTICDEV_INSTANCE_ID:-}
       WO_VERIFY_KEY_B64: ${WO_VERIFY_KEY_B64:-}
       CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-}
       LEASE_HOURS: ${LEASE_HOURS:-4}
@@ -149,16 +149,16 @@ services:
       TS_AUTHKEY: ${TS_AUTHKEY:-}
       TS_API_KEY: ${TS_API_KEY:-}
       TS_TAILNET: ${TS_TAILNET:--}
-      PRAUT_OUT: /out
+      AGENTICDEV_OUT: /out
       TZ: ${TZ:-Europe/Prague}
     ports:
       - "${VPS_HOST}:8080:8080"
     volumes:
-      - /srv/praut/data/directors:/directors
-      - /srv/praut/src:/repo:ro
-      - /srv/praut/src/workspace:/workspace-templates:ro
+      - /srv/agenticdev/data/directors:/directors
+      - /srv/agenticdev/src:/repo:ro
+      - /srv/agenticdev/src/workspace:/workspace-templates:ro
       # instalátor pro tým — vydává se přes /join/installer proti heslu
-      - /srv/praut/out:/out:ro
+      - /srv/agenticdev/out:/out:ro
     depends_on:
       postgres: { condition: service_healthy }
       minio:    { condition: service_healthy }

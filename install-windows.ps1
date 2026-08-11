@@ -1,9 +1,9 @@
 # ═══════════════════════════════════════════════════════════════
-#  PRAUT — připojení Windows
+#  AGENTICDEV — připojení Windows
 #
-#      powershell -ExecutionPolicy Bypass -File praut-install.ps1 -Token <HESLO>
+#      powershell -ExecutionPolicy Bypass -File agenticdev-install.ps1 -Token <HESLO>
 #
-#  Praut potřebuje Docker a linuxový shell, takže na Windows běží ve
+#  AgenticDev potřebuje Docker a linuxový shell, takže na Windows běží ve
 #  WSL2. Tenhle skript připraví Windows část (WSL, Tailscale, ikona)
 #  a zbytek předá linuxovému instalátoru uvnitř WSL.
 #
@@ -118,14 +118,14 @@ if (-not $connected) {
 OK "tailscale"
 
 # ═══ 4. Instalace uvnitř WSL ═══════════════════════════════════
-Step "Praut"
+Step "AgenticDev"
 $inner = @"
 set -e
 curl -fsS -X POST '$ControlPlane/join/installer' \
   -H 'content-type: application/json' \
-  -d '{"password":"$Token"}' -o /tmp/praut-install.sh
-bash /tmp/praut-install.sh '$Token'
-rm -f /tmp/praut-install.sh
+  -d '{"password":"$Token"}' -o /tmp/agenticdev-install.sh
+bash /tmp/agenticdev-install.sh '$Token'
+rm -f /tmp/agenticdev-install.sh
 "@ -replace "`r", ""
 
 $tmp = [IO.Path]::GetTempFileName()
@@ -140,12 +140,12 @@ OK "nainstalováno"
 
 # ═══ 5. Ikona na plochu ════════════════════════════════════════
 Step "Ikona"
-$dir = Join-Path $env:LOCALAPPDATA "Praut"
+$dir = Join-Path $env:LOCALAPPDATA "AgenticDev"
 New-Item -ItemType Directory -Force -Path $dir *>$null
 
-$ico = Join-Path $dir "praut.ico"
+$ico = Join-Path $dir "agenticdev.ico"
 try {
-    Invoke-WebRequest -Uri "$ControlPlane/brand/praut.ico" -OutFile $ico -UseBasicParsing
+    Invoke-WebRequest -Uri "$ControlPlane/brand/agenticdev.ico" -OutFile $ico -UseBasicParsing
 } catch {
     Warn "ikonu se nepodařilo stáhnout, zástupce bude s výchozí"
 }
@@ -154,19 +154,19 @@ $shell = New-Object -ComObject WScript.Shell
 foreach ($base in @([Environment]::GetFolderPath("Desktop"),
                     (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))) {
     if (-not (Test-Path $base)) { continue }
-    $lnk = $shell.CreateShortcut((Join-Path $base "Praut.lnk"))
+    $lnk = $shell.CreateShortcut((Join-Path $base "AgenticDev.lnk"))
     $lnk.TargetPath       = "$env:SystemRoot\System32\wsl.exe"
-    $lnk.Arguments        = "-d $Distro -- bash -lic 'praut work'"
+    $lnk.Arguments        = "-d $Distro -- bash -lic 'agenticdev work'"
     $lnk.Description      = "Otevře agenta a výběr projektu"
     $lnk.WorkingDirectory = $env:USERPROFILE
     if (Test-Path $ico) { $lnk.IconLocation = $ico }
     $lnk.Save()
 }
-OK "Praut na ploše i v nabídce Start"
+OK "AgenticDev na ploše i v nabídce Start"
 
 Write-Host ""
 Write-Host "  Hotovo." -ForegroundColor Green
 Write-Host ""
-Write-Host "  Klikni na ikonu Praut na ploše, nebo spusť ve WSL:"
-Write-Host "      praut work"
+Write-Host "  Klikni na ikonu AgenticDev na ploše, nebo spusť ve WSL:"
+Write-Host "      agenticdev work"
 Write-Host ""

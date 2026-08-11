@@ -1,4 +1,4 @@
-# Agentní vývojová platforma Praut — kompletní architektonický rozbor
+# Agentní vývojová platforma AgenticDev — kompletní architektonický rozbor
 
 **Verze:** 0.2 — po upřesnění náčrtu (`compose + harness`, `serving directors`)
 **Datum:** 7. 8. 2026
@@ -143,7 +143,7 @@ Veřejně otevřené zůstává jen `443` na reverse proxy (Caddy — automatick
 
 ### IaC
 
-Celý VPS popsaný jako kód od prvního dne. Ansible je pro tenhle rozsah lepší než Terraform (nemáš cloud resources, máš jeden stroj). Repo `praut/infra`, playbooky idempotentní, tajemství přes `ansible-vault` nebo SOPS.
+Celý VPS popsaný jako kód od prvního dne. Ansible je pro tenhle rozsah lepší než Terraform (nemáš cloud resources, máš jeden stroj). Repo `agenticdev/infra`, playbooky idempotentní, tajemství přes `ansible-vault` nebo SOPS.
 
 ---
 
@@ -158,8 +158,8 @@ Celý VPS popsaný jako kód od prvního dne. Ansible je pro tenhle rozsah lepš
 | PRD / znalosti | **Markdown v gitu + pgvector index** | Outline, Obsidian sync, Notion | Verzované, diffovatelné, agenti to čtou nativně |
 | Tajemství | **SOPS + age** (repo) + Forgejo secrets (CI) | Infisical, Vault | Vault je na 3 lidi overkill. SOPS je 0 provozních nákladů. |
 | **Harness** | OCI image v registry, pinovaný digestem | pip/npm balík | Harness je runtime — patří do image, ne do skriptu |
-| **Directors** | repo `praut/directors` → podepsané balíčky v MinIO | přímo z gitu | Potřebuješ podpis, kanály a rollback; git tag na to nestačí |
-| **Compose katalog** | repo `praut/pods`, per projekt | vlastní templating | Verzovaná topologie prostředí; pod launcher si ji stahuje |
+| **Directors** | repo `agenticdev/directors` → podepsané balíčky v MinIO | přímo z gitu | Potřebuješ podpis, kanály a rollback; git tag na to nestačí |
+| **Compose katalog** | repo `agenticdev/pods`, per projekt | vlastní templating | Verzovaná topologie prostředí; pod launcher si ji stahuje |
 
 ### Poznámka k PRD store
 
@@ -263,7 +263,7 @@ Tohle je centrální artefakt celého systému. Kontejner na stanici si o něj �
   },
 
   "repo": {
-    "url": "git@vps:praut/montexbau.git",
+    "url": "git@vps:agenticdev/montexbau.git",
     "base_ref": "main@a3f91c2",
     "work_branch": "task/tsk_.../wip",
     "write_scope": ["src/import/**", "tests/import/**", "prd/montexbau/40-decisions/**"]
@@ -285,7 +285,7 @@ Tohle je centrální artefakt celého systému. Kontejner na stanici si o něj �
       "sha256": "..."
     },
     "harness": {
-      "image": "registry.vps/praut/harness@sha256:9b2f...",
+      "image": "registry.vps/agenticdev/harness@sha256:9b2f...",
       "api_version": "5.3.0"
     },
     "director": {
@@ -463,7 +463,7 @@ Bod 5 je odpověď na námitku "když director běží u vývojáře, jak ho zas
 
 ### Startup sekvence
 
-Na stanici vývojáře je nainstalovaná **jediná věc: launcher** (`praut pod up <projekt>`). Ani Docker image, ani harness, ani directors — všechno si stáhne. Tím je onboarding nové stanice otázkou dvou příkazů.
+Na stanici vývojáře je nainstalovaná **jediná věc: launcher** (`agenticdev pod up <projekt>`). Ani Docker image, ani harness, ani directors — všechno si stáhne. Tím je onboarding nové stanice otázkou dvou příkazů.
 
 ```
 ── řídí LAUNCHER (na hostu) ──

@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+# Spouštěč. Otevře Ghostty (nebo náhradu) a spustí v něm agenticdev work.
+set -euo pipefail
+
+AGENTICDEV=""
+for c in /usr/local/bin/agenticdev "$HOME/bin/agenticdev" /opt/homebrew/bin/agenticdev; do
+  [[ -x "$c" ]] && { AGENTICDEV="$c"; break; }
+done
+if [[ -z "$AGENTICDEV" ]]; then
+  osascript -e 'display alert "AgenticDev není nainstalovaný" message "Pusť instalační příkaz, který ti poslal správce." as critical'
+  exit 1
+fi
+
+CMD="$AGENTICDEV work"
+
+if [[ -d /Applications/Ghostty.app ]]; then
+  open -na Ghostty --args --class=cz.agenticdev --title="AgenticDev" -e "$CMD"
+elif [[ -d /Applications/iTerm.app ]]; then
+  osascript -e "tell application \"iTerm\" to create window with default profile command \"$CMD\"" >/dev/null
+else
+  T=$(mktemp -t agenticdev).command
+  printf '#!/bin/bash\nclear\nexec %s\n' "$CMD" > "$T"
+  chmod +x "$T"
+  open -a Terminal "$T"
+fi

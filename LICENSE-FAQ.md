@@ -10,7 +10,7 @@
 
 ## 🇨🇿 Česky
 
-Praut Platform je vydán pod **Business Source License 1.1 (BSL)**. Není to
+AgenticDev je vydán pod **Business Source License 1.1 (BSL)**. Není to
 open source podle definice OSI — je to *source-available*. Zdrojový kód je
 veřejný, můžeš si ho číst, měnit i šířit, ale produkční použití má hranici.
 
@@ -29,7 +29,7 @@ veřejný, můžeš si ho číst, měnit i šířit, ale produkční použití m
 | Situace | Zdarma? |
 |---|---|
 | Provoz ve firmě s obratem **nad 1 000 000 EUR** | ❌ napiš si o licenci |
-| Nabízet Praut třetím stranám jako placenou hostovanou službu | ❌ napiš si o licenci |
+| Nabízet AgenticDev třetím stranám jako placenou hostovanou službu | ❌ napiš si o licenci |
 
 Obrat se počítá za celou skupinu včetně mateřských a sesterských firem, ne
 za jednu pobočku.
@@ -54,7 +54,7 @@ uvolní, není to past.
 
 ## 🇬🇧 English
 
-Praut Platform is released under the **Business Source License 1.1 (BSL)**.
+AgenticDev is released under the **Business Source License 1.1 (BSL)**.
 This is *not* OSI-approved open source — it is **source-available**. The
 source is public, you may read, modify, and redistribute it, but production
 use has a threshold.
@@ -74,7 +74,7 @@ use has a threshold.
 | Situation | Free? |
 |---|---|
 | Production use at an organization with **over EUR 1,000,000** revenue | ❌ contact us |
-| Offering Praut to third parties as a paid hosted service | ❌ contact us |
+| Offering AgenticDev to third parties as a paid hosted service | ❌ contact us |
 
 Revenue is counted across the whole corporate group including parents and
 affiliates, not per subsidiary.
@@ -107,4 +107,4 @@ Tell us your company size and intended use. We will reply with pricing.
 
 ---
 
-© 2026 Praut s.r.o. · Praut Platform
+© 2026 Praut s.r.o. · AgenticDev

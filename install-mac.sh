@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  PRAUT — připojení Macu
+#  AGENTICDEV — připojení Macu
 #
 #      curl -fsSL http://<vps>/install-mac.sh | bash -s -- <TOKEN>
 #
@@ -15,10 +15,10 @@ warn(){ printf "${Y}  !${O} %s\n" "$*"; }
 die() { printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
 
 TOKEN="${1:-}"
-CP="${PRAUT_CP:-__CONTROL_PLANE__}"
-HOME_DIR="$HOME/.praut"
-WORK_DIR="$HOME/Praut"
-APP="/Applications/Praut.app"
+CP="${AGENTICDEV_CP:-__CONTROL_PLANE__}"
+HOME_DIR="$HOME/.agenticdev"
+WORK_DIR="$HOME/AgenticDev"
+APP="/Applications/AgenticDev.app"
 
 clear
 cat <<'BANNER'
@@ -75,9 +75,9 @@ step "Terminál"
 [[ -d /Applications/Ghostty.app ]] || brew install -q --cask ghostty >/dev/null 2>&1 || true
 if [[ -d /Applications/Ghostty.app ]]; then
   mkdir -p "$HOME/.config/ghostty"
-  if [[ -f "$HOME/.config/ghostty/config" ]] && ! grep -q '^# Praut' "$HOME/.config/ghostty/config"; then
-    cp "$HOME/.config/ghostty/config" "$HOME/.config/ghostty/config.pred-prautem"
-    warn "tvoje konfigurace Ghostty zazálohována jako config.pred-prautem"
+  if [[ -f "$HOME/.config/ghostty/config" ]] && ! grep -q '^# AgenticDev' "$HOME/.config/ghostty/config"; then
+    cp "$HOME/.config/ghostty/config" "$HOME/.config/ghostty/config.pred-agenticdevem"
+    warn "tvoje konfigurace Ghostty zazálohována jako config.pred-agenticdevem"
   fi
   curl -fsSL "$CP/ghostty-config" -o "$HOME/.config/ghostty/config" 2>/dev/null || true
   brew list --cask font-jetbrains-mono >/dev/null 2>&1 || \
@@ -104,7 +104,7 @@ ok "spojení s VPS"
 step "Klíče tohoto Macu"
 mkdir -p "$HOME_DIR"; chmod 700 "$HOME_DIR"
 [[ -f "$HOME_DIR/device.key" ]] || \
-  ssh-keygen -t ed25519 -N '' -C "praut-$(scutil --get ComputerName 2>/dev/null || hostname)" \
+  ssh-keygen -t ed25519 -N '' -C "agenticdev-$(scutil --get ComputerName 2>/dev/null || hostname)" \
     -f "$HOME_DIR/device.key" -q
 [[ -f "$HOME/.ssh/id_ed25519" ]] || {
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
@@ -142,27 +142,32 @@ GITHOST=$(sed 's|^ssh://git@||; s|/.*||; s|:.*||' <<<"$(jq -r .git_ssh <<<"$RESP
 GITPORT=$(jq -r .git_ssh <<<"$RESP" | sed -n 's|.*:\([0-9]*\)$|\1|p')
 [[ -n "$GITHOST" ]] && ssh-keyscan -p "${GITPORT:-22}" "$GITHOST" >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-# ═══ 6. praut ══════════════════════════════════════════════════
-step "Nástroj praut"
-curl -fsSL "$CP/praut" -o "$HOME_DIR/praut" || die "praut se nepodařilo stáhnout"
-chmod +x "$HOME_DIR/praut"
-if sudo -n true 2>/dev/null; then sudo install -m755 "$HOME_DIR/praut" /usr/local/bin/praut
+# ═══ 6. agenticdev ══════════════════════════════════════════════════
+step "Nástroj agenticdev"
+curl -fsSL "$CP/agenticdev" -o "$HOME_DIR/agenticdev" || die "agenticdev se nepodařilo stáhnout"
+chmod +x "$HOME_DIR/agenticdev"
+# Zkratka `adev` vedle plného jména — celé se píše každý den.
+if sudo -n true 2>/dev/null; then
+  sudo install -m755 "$HOME_DIR/agenticdev" /usr/local/bin/agenticdev
+  sudo ln -sf /usr/local/bin/agenticdev /usr/local/bin/adev
 else
-  mkdir -p "$HOME/bin"; install -m755 "$HOME_DIR/praut" "$HOME/bin/praut"
+  mkdir -p "$HOME/bin"
+  install -m755 "$HOME_DIR/agenticdev" "$HOME/bin/agenticdev"
+  ln -sf "$HOME/bin/agenticdev" "$HOME/bin/adev"
   grep -q 'HOME/bin' "$HOME/.zshrc" 2>/dev/null || echo 'export PATH="$HOME/bin:$PATH"' >> "$HOME/.zshrc"
 fi
 mkdir -p "$WORK_DIR"
-ok "praut"
+ok "agenticdev"
 
 # ═══ 7. Aplikace ═══════════════════════════════════════════════
 step "Aplikace"
 rm -rf "$APP"
-curl -fsSL "$CP/praut-app.tar.gz" -o /tmp/praut-app.tar.gz 2>/dev/null \
-  && tar xzf /tmp/praut-app.tar.gz -C /Applications 2>/dev/null \
+curl -fsSL "$CP/agenticdev-app.tar.gz" -o /tmp/agenticdev-app.tar.gz 2>/dev/null \
+  && tar xzf /tmp/agenticdev-app.tar.gz -C /Applications 2>/dev/null \
   || { mkdir -p "$APP/Contents/MacOS"
-       curl -fsSL "$CP/praut-app-plist" -o "$APP/Contents/Info.plist" 2>/dev/null
-       curl -fsSL "$CP/praut-app-bin"   -o "$APP/Contents/MacOS/Praut" 2>/dev/null; }
-chmod +x "$APP/Contents/MacOS/Praut" 2>/dev/null || true
+       curl -fsSL "$CP/agenticdev-app-plist" -o "$APP/Contents/Info.plist" 2>/dev/null
+       curl -fsSL "$CP/agenticdev-app-bin"   -o "$APP/Contents/MacOS/AgenticDev" 2>/dev/null; }
+chmod +x "$APP/Contents/MacOS/AgenticDev" 2>/dev/null || true
 
 # Ikona. .icns se nedá vyrobit jinde než na macOS, tak ji sestavíme tady
 # z iconsetu, který přišel v balíčku.
@@ -174,8 +179,8 @@ if [[ -d "$ICONSET" ]] && command -v iconutil >/dev/null; then
 fi
 
 xattr -dr com.apple.quarantine "$APP" 2>/dev/null || true
-touch "$APP"; rm -f /tmp/praut-app.tar.gz
-[[ -x "$APP/Contents/MacOS/Praut" ]] && ok "Praut.app v Applications" || warn "aplikaci se nepodařilo vytvořit"
+touch "$APP"; rm -f /tmp/agenticdev-app.tar.gz
+[[ -x "$APP/Contents/MacOS/AgenticDev" ]] && ok "AgenticDev.app v Applications" || warn "aplikaci se nepodařilo vytvořit"
 
 open -a Dock 2>/dev/null || true
 defaults write com.apple.dock persistent-apps -array-add \
@@ -188,7 +193,7 @@ cat <<EOF
 
   ${G}Hotovo. Tenhle Mac je připojený.${O}
 
-  ${B}Práce${O}     klikni na ${Y}Praut${O} v Docku
+  ${B}Práce${O}     klikni na ${Y}AgenticDev${O} v Docku
   ${B}Nástěnka${O}  $CP
 
   ${D}Ještě jednou se přihlas do Pi:${O}

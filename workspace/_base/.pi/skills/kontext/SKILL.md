@@ -15,7 +15,7 @@ Přečti v tomto pořadí:
 5. `prd/40-decisions/` — dřívější rozhodnutí, drž se jich
 
 Pak shrň:
-- co je aktivní fáze a co v ní smíš měnit (`.praut/scope`)
+- co je aktivní fáze a co v ní smíš měnit (`.agenticdev/scope`)
 - co v glosáři evidentně chybí
 - jestli si dřívější rozhodnutí odporují
 

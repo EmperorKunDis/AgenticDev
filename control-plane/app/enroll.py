@@ -28,9 +28,9 @@ from pydantic import BaseModel
 
 router = APIRouter()
 
-INSTANCE_ID     = os.environ.get("PRAUT_INSTANCE_ID", "")
+INSTANCE_ID     = os.environ.get("AGENTICDEV_INSTANCE_ID", "")
 VERIFY_KEY      = os.environ.get("WO_VERIFY_KEY_B64", "")
-PRAUT_DOMAIN    = os.environ.get("PRAUT_DOMAIN", "")
+AGENTICDEV_DOMAIN    = os.environ.get("AGENTICDEV_DOMAIN", "")
 
 # Hesla a klíče se čtou přes nastavení, aby změna v panelu platila hned.
 from . import settings as cfg
@@ -39,7 +39,7 @@ from . import settings as cfg
 def _enroll_password() -> str:
     return cfg.get("ENROLL_PASSWORD", "")
 
-INSTALLER_PATH  = Path(os.environ.get("PRAUT_OUT", "/out")) / "praut-install-mac.sh"
+INSTALLER_PATH  = Path(os.environ.get("AGENTICDEV_OUT", "/out")) / "agenticdev-install-mac.sh"
 
 # ═══════════════════════════════════════════════════════════════
 #  Omezení pokusů
@@ -127,12 +127,12 @@ def _mint_authkey(label: str) -> str | None:
                                 "reusable": False,
                                 "ephemeral": False,
                                 "preauthorized": True,
-                                "tags": ["tag:praut-client"],
+                                "tags": ["tag:agenticdev-client"],
                             }
                         }
                     },
                     "expirySeconds": 3600,
-                    "description": f"praut enroll {label}",
+                    "description": f"agenticdev enroll {label}",
                 },
             )
             if r.status_code in (200, 201):
@@ -175,7 +175,7 @@ def join(body: JoinRequest, request: Request):
         "ok": True,
         "instance_id": INSTANCE_ID,
         "fingerprint": f"sha256:{fp}",
-        "domain": PRAUT_DOMAIN,
+        "domain": AGENTICDEV_DOMAIN,
         "tailscale_authkey": key,
         "installer_url": "/join/installer",
         "have_installer": INSTALLER_PATH.is_file(),
@@ -211,17 +211,17 @@ def installer(body: JoinRequest, request: Request):
         if not f.is_file():
             raise HTTPException(503, "install-linux.sh není nasazený")
         cp = os.environ.get("CONTROL_PLANE_URL") or (
-            f"https://{PRAUT_DOMAIN}" if PRAUT_DOMAIN else "http://localhost:8080")
+            f"https://{AGENTICDEV_DOMAIN}" if AGENTICDEV_DOMAIN else "http://localhost:8080")
         body_txt = f.read_text().replace("__CONTROL_PLANE__", cp)
     else:
         if not INSTALLER_PATH.is_file():
             raise HTTPException(
-                503, "instalátor ještě nebyl vygenerován — na serveru spusť: sudo praut-mac-installer")
+                503, "instalátor ještě nebyl vygenerován — na serveru spusť: sudo agenticdev-mac-installer")
         body_txt = INSTALLER_PATH.read_text()
 
     return PlainTextResponse(
         body_txt,
-        headers={"content-disposition": 'attachment; filename="praut-install.sh"'},
+        headers={"content-disposition": 'attachment; filename="agenticdev-install.sh"'},
     )
 
 

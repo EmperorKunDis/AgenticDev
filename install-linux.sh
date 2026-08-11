@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  PRAUT — připojení Linuxu
+#  AGENTICDEV — připojení Linuxu
 #
-#      bash praut-install.sh <TOKEN>
+#      bash agenticdev-install.sh <TOKEN>
 #
 #  Idempotentní. Můžeš pustit znovu, nic nerozbije.
 #  Nespouštěj přes sudo — instaluje se do tvého domovského adresáře.
@@ -16,9 +16,9 @@ warn(){ printf "${Y}  !${O} %s\n" "$*"; }
 die() { printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
 
 TOKEN="${1:-}"
-CP="${PRAUT_CP:-__CONTROL_PLANE__}"
-HOME_DIR="$HOME/.praut"
-WORK_DIR="$HOME/Praut"
+CP="${AGENTICDEV_CP:-__CONTROL_PLANE__}"
+HOME_DIR="$HOME/.agenticdev"
+WORK_DIR="$HOME/AgenticDev"
 BIN_DIR="$HOME/.local/bin"
 APPS="$HOME/.local/share/applications"
 ICONS="$HOME/.local/share/icons/hicolor"
@@ -83,7 +83,7 @@ command -v pi >/dev/null && ok "pi" || true
 
 # ═══ 2. Docker ═════════════════════════════════════════════════
 # Agent běží v kontejneru, ne přímo na tvém stroji. Bez Dockeru se
-# `praut work` odmítne spustit.
+# `agenticdev work` odmítne spustit.
 step "Docker"
 if ! command -v docker >/dev/null; then
   warn "instaluji Docker"
@@ -131,7 +131,7 @@ ok "spojení se serverem"
 step "Klíče tohohle stroje"
 mkdir -p "$HOME_DIR"; chmod 700 "$HOME_DIR"
 [[ -f "$HOME_DIR/device.key" ]] || \
-  ssh-keygen -t ed25519 -N '' -C "praut-$(hostname)" -f "$HOME_DIR/device.key" -q
+  ssh-keygen -t ed25519 -N '' -C "agenticdev-$(hostname)" -f "$HOME_DIR/device.key" -q
 [[ -f "$HOME/.ssh/id_ed25519" ]] || {
   mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
   ssh-keygen -t ed25519 -N '' -C "$(whoami)@$(hostname)" -f "$HOME/.ssh/id_ed25519" -q; }
@@ -168,11 +168,13 @@ GITPORT=$(jq -r .git_ssh <<<"$RESP" | sed -n 's|.*:\([0-9]*\)$|\1|p')
 [[ -n "$GITHOST" ]] && ssh-keyscan -p "${GITPORT:-22}" "$GITHOST" \
   >> "$HOME/.ssh/known_hosts" 2>/dev/null || true
 
-# ═══ 6. praut ══════════════════════════════════════════════════
-step "Nástroj praut"
+# ═══ 6. agenticdev ══════════════════════════════════════════════════
+step "Nástroj agenticdev"
 mkdir -p "$BIN_DIR"
-curl -fsSL "$CP/praut" -o "$BIN_DIR/praut" || die "praut se nepodařilo stáhnout"
-chmod +x "$BIN_DIR/praut"
+curl -fsSL "$CP/agenticdev" -o "$BIN_DIR/agenticdev" || die "agenticdev se nepodařilo stáhnout"
+chmod +x "$BIN_DIR/agenticdev"
+# Zkratka. Celé jméno se píše každý den, tři písmena stačí.
+ln -sf "$BIN_DIR/agenticdev" "$BIN_DIR/adev"
 mkdir -p "$WORK_DIR"
 
 for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
@@ -180,34 +182,34 @@ for rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
   grep -q '.local/bin' "$rc" || echo 'export PATH="$HOME/.local/bin:$PATH"' >> "$rc"
 done
 export PATH="$BIN_DIR:$PATH"
-ok "praut"
+ok "agenticdev"
 
 # ═══ 7. Ikona na plochu ════════════════════════════════════════
 step "Ikona"
 mkdir -p "$APPS" "$ICONS"
-curl -fsSL "$CP/brand/praut-launch" -o "$BIN_DIR/praut-launch" 2>/dev/null \
-  || curl -fsSL "$CP/linux/praut-launch" -o "$BIN_DIR/praut-launch" 2>/dev/null || true
-chmod +x "$BIN_DIR/praut-launch" 2>/dev/null || true
+curl -fsSL "$CP/brand/agenticdev-launch" -o "$BIN_DIR/agenticdev-launch" 2>/dev/null \
+  || curl -fsSL "$CP/linux/agenticdev-launch" -o "$BIN_DIR/agenticdev-launch" 2>/dev/null || true
+chmod +x "$BIN_DIR/agenticdev-launch" 2>/dev/null || true
 
 for sz in 16 32 48 64 128 256 512; do
   d="$ICONS/${sz}x${sz}/apps"; mkdir -p "$d"
-  curl -fsSL "$CP/brand/png/icon-$sz.png" -o "$d/praut.png" 2>/dev/null || true
+  curl -fsSL "$CP/brand/png/icon-$sz.png" -o "$d/agenticdev.png" 2>/dev/null || true
 done
 
-cat > "$APPS/praut.desktop" <<EOF
+cat > "$APPS/agenticdev.desktop" <<EOF
 [Desktop Entry]
 Type=Application
 Version=1.0
-Name=Praut
+Name=AgenticDev
 GenericName=Agentic development
 Comment=Otevře agenta a výběr projektu
-Exec=$BIN_DIR/praut-launch
-Icon=praut
+Exec=$BIN_DIR/agenticdev-launch
+Icon=agenticdev
 Terminal=false
 Categories=Development;IDE;
 StartupNotify=true
 EOF
-chmod +x "$APPS/praut.desktop"
+chmod +x "$APPS/agenticdev.desktop"
 
 command -v update-desktop-database >/dev/null && \
   update-desktop-database "$APPS" >/dev/null 2>&1 || true
@@ -217,19 +219,19 @@ command -v gtk-update-icon-cache >/dev/null && \
 # Některá prostředí chtějí ikonu i fyzicky na ploše
 DESKTOP=$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")
 if [[ -d "$DESKTOP" ]]; then
-  cp "$APPS/praut.desktop" "$DESKTOP/praut.desktop" 2>/dev/null || true
-  chmod +x "$DESKTOP/praut.desktop" 2>/dev/null || true
-  gio set "$DESKTOP/praut.desktop" metadata::trusted true 2>/dev/null || true
+  cp "$APPS/agenticdev.desktop" "$DESKTOP/agenticdev.desktop" 2>/dev/null || true
+  chmod +x "$DESKTOP/agenticdev.desktop" 2>/dev/null || true
+  gio set "$DESKTOP/agenticdev.desktop" metadata::trusted true 2>/dev/null || true
 fi
-ok "Praut v nabídce aplikací"
+ok "AgenticDev v nabídce aplikací"
 
 # ═══ Hotovo ════════════════════════════════════════════════════
 cat <<EOF
 
   ${G}Hotovo.${O}
 
-  Klikni na ikonu ${B}Praut${O} v nabídce aplikací, nebo spusť:
+  Klikni na ikonu ${B}AgenticDev${O} v nabídce aplikací, nebo spusť:
 
-      ${D}praut work${O}
+      ${D}agenticdev work${O}
 
 EOF

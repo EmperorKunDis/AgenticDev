@@ -18,17 +18,17 @@ RUN npm install -g @earendil-works/pi-coding-agent \
 # Nezakládáme nového uživatele — obraz node už má uid/gid 1000 (node).
 # Launcher pod tímhle uid pouští kontejner, aby soubory ve /workspace
 # patřily člověku na hostiteli, ne rootovi.
-RUN mkdir -p /run/praut /ctx /workspace \
-    && chown -R node:node /run/praut
+RUN mkdir -p /run/agenticdev /ctx /workspace \
+    && chown -R node:node /run/agenticdev
 
-COPY harness/harness.py /opt/praut/harness.py
-RUN chmod 0555 /opt/praut/harness.py
+COPY harness/harness.py /opt/agenticdev/harness.py
+RUN chmod 0555 /opt/agenticdev/harness.py
 
 USER node
 WORKDIR /workspace
 
-ENV PRAUT_IN_POD=1 \
+ENV AGENTICDEV_IN_POD=1 \
     GIT_TERMINAL_PROMPT=0 \
     NPM_CONFIG_UPDATE_NOTIFIER=false
 
-ENTRYPOINT ["python3", "/opt/praut/harness.py"]
+ENTRYPOINT ["python3", "/opt/agenticdev/harness.py"]

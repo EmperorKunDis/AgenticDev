@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # ═══════════════════════════════════════════════════════════════
-#  praut-git — git automatizace
+#  agenticdev-git — git automatizace
 #
 #  Deterministický nástroj. Žádný model, žádné tokeny.
 #  Agent i člověk volají to samé.
@@ -22,9 +22,12 @@ die()  { printf "${R}✗${O} %s\n" "$*" >&2; exit 1; }
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || die "Nejsi v git repozitáři."
 COMMON=$(git rev-parse --git-common-dir)
 MAIN_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null | sed 's|origin/||' || echo main)
-TREES="$(dirname "$ROOT")/.praut-trees"
-SESSION="${PI_SESSION_ID:-${PRAUT_SESSION:-manual}}"
-NOTES_REF="refs/notes/praut"
+# V podu je $ROOT rovno /workspace, takže dirname vyjde na "/" — worktree
+# by vznikly uvnitř kontejneru a po teardownu zmizely i s prací.
+# Launcher proto podstrčí AGENTICDEV_TREES na adresář připojený z hostitele.
+TREES="${AGENTICDEV_TREES:-$(dirname "$ROOT")/.agenticdev-trees}"
+SESSION="${PI_SESSION_ID:-${AGENTICDEV_SESSION:-manual}}"
+NOTES_REF="refs/notes/agenticdev"
 
 # Přepis diakritiky. Po jednotlivých znacích — třídy znaků rozbíjejí UTF-8.
 slug() {
@@ -92,14 +95,14 @@ slug() {
 #  start — nový úkol = nový worktree + větev
 # ═══════════════════════════════════════════════════════════════
 cmd_start() {
-  local desc="${1:?použití: praut-git start \"popis úkolu\" [task-id]}"
+  local desc="${1:?použití: agenticdev-git start \"popis úkolu\" [task-id]}"
   local tid="${2:-}"
   local s; s=$(slug "$desc")
   local branch="task/${tid:+$tid-}$s"
   local wt="$TREES/$s"
 
   # Celé tělo píše na stderr. Na stdout jde jedině cesta k worktree,
-  # aby fungovalo:  cd "$(praut-git start "...")"
+  # aby fungovalo:  cd "$(agenticdev-git start "...")"
   {
     git fetch --quiet origin 2>/dev/null || warn "fetch selhal, jedu z lokálního stavu"
 
@@ -117,8 +120,8 @@ cmd_start() {
       git worktree add --quiet "$wt" "$branch"
     fi
 
-    mkdir -p "$wt/.praut"
-    python3 - "$tid" "$desc" "$branch" "$MAIN_BRANCH" "$SESSION" > "$wt/.praut/task.json" <<'PYJSON'
+    mkdir -p "$wt/.agenticdev"
+    python3 - "$tid" "$desc" "$branch" "$MAIN_BRANCH" "$SESSION" > "$wt/.agenticdev/task.json" <<'PYJSON'
 import json, sys, datetime
 tid, title, branch, base, session = sys.argv[1:6]
 json.dump({"task_id": tid, "title": title, "branch": branch, "base": base,
@@ -141,7 +144,7 @@ PYJSON
 cmd_checkpoint() {
   local msg="${1:-průběžný stav}"
   [[ "$(git branch --show-current)" != "$MAIN_BRANCH" ]] \
-    || die "Jsi na $MAIN_BRANCH. Nejdřív: praut-git start \"popis\""
+    || die "Jsi na $MAIN_BRANCH. Nejdřív: agenticdev-git start \"popis\""
   git add -A
   git diff --cached --quiet && { info "nic nového"; return 0; }
 
@@ -155,7 +158,7 @@ cmd_checkpoint() {
 #  save — pořádný commit podle Conventional Commits
 # ═══════════════════════════════════════════════════════════════
 cmd_save() {
-  local type="${1:?použití: praut-git save <feat|fix|refactor|test|docs|chore> <scope> \"zpráva\"}"
+  local type="${1:?použití: agenticdev-git save <feat|fix|refactor|test|docs|chore> <scope> \"zpráva\"}"
   local scope="${2:?chybí scope}"
   local msg="${3:?chybí zpráva}"
   case "$type" in
@@ -164,12 +167,12 @@ cmd_save() {
   esac
 
   [[ "$(git branch --show-current)" != "$MAIN_BRANCH" ]] \
-    || die "Jsi na $MAIN_BRANCH. Nejdřív: praut-git start \"popis\""
+    || die "Jsi na $MAIN_BRANCH. Nejdřív: agenticdev-git start \"popis\""
   git add -A
   git diff --cached --quiet && { info "nic k uložení"; return 0; }
 
   local tid=""
-  [[ -f .praut/task.json ]] && tid=$(python3 -c 'import json;print(json.load(open(".praut/task.json")).get("task_id",""))' 2>/dev/null || true)
+  [[ -f .agenticdev/task.json ]] && tid=$(python3 -c 'import json;print(json.load(open(".agenticdev/task.json")).get("task_id",""))' 2>/dev/null || true)
 
   git commit --quiet -m "$type($scope): $msg" \
     -m "${tid:+Task-Id: $tid}" -m "Session: $SESSION"
@@ -233,13 +236,13 @@ cmd_finish() {
   git push --quiet origin "$NOTES_REF" 2>/dev/null || true
 
   # PR přes Forgejo API
-  if [[ -n "${PRAUT_FORGEJO_URL:-}" && -n "${PRAUT_FORGEJO_TOKEN:-}" && -n "${PRAUT_REPO:-}" ]]; then
+  if [[ -n "${AGENTICDEV_FORGEJO_URL:-}" && -n "${AGENTICDEV_FORGEJO_TOKEN:-}" && -n "${AGENTICDEV_REPO:-}" ]]; then
     local body; body="Session: \`$SESSION\`
 
 $(git log --format='- %s' "origin/$MAIN_BRANCH..HEAD")"
     local r; r=$(curl -fsS -X POST \
-      "$PRAUT_FORGEJO_URL/api/v1/repos/$PRAUT_REPO/pulls" \
-      -H "Authorization: token $PRAUT_FORGEJO_TOKEN" \
+      "$AGENTICDEV_FORGEJO_URL/api/v1/repos/$AGENTICDEV_REPO/pulls" \
+      -H "Authorization: token $AGENTICDEV_FORGEJO_TOKEN" \
       -H 'content-type: application/json' \
       -d "$(python3 -c "
 import json,sys
@@ -273,9 +276,9 @@ cmd_list() {
 }
 
 cmd_switch() {
-  local q="${1:?použití: praut-git switch <část-názvu>}"
+  local q="${1:?použití: agenticdev-git switch <část-názvu>}"
   local w; w=$(git worktree list --porcelain | awk '/^worktree /{print $2}' | grep -i "$q" | head -1)
-  [[ -n "$w" ]] || die "worktree '$q' nenalezen (praut-git list)"
+  [[ -n "$w" ]] || die "worktree '$q' nenalezen (agenticdev-git list)"
   echo "$w"
 }
 
@@ -283,7 +286,7 @@ cmd_switch() {
 #  who — kdo napsal tenhle řádek a v jaké session
 # ═══════════════════════════════════════════════════════════════
 cmd_who() {
-  local f="${1:?použití: praut-git who <soubor> [řádek]}"
+  local f="${1:?použití: agenticdev-git who <soubor> [řádek]}"
   local ln="${2:-}"
   local sha
   if [[ -n "$ln" ]]; then
@@ -329,7 +332,7 @@ case "${1:-help}" in
   who)        shift; cmd_who "$@" ;;
   cleanup)    cmd_cleanup ;;
   *) cat <<'HELP'
-praut-git — git automatizace
+agenticdev-git — git automatizace
 
   start "popis" [id]   nový worktree + větev z main
   checkpoint [zpráva]  průběžný bod návratu (wip commit)

@@ -41,7 +41,7 @@ oprav i v `LICENSE-FAQ.md` a v obou README.
 
 Licence nekryje jméno ani logo — ta zůstávají tvoje bez ohledu na to, co si
 kdo s kódem udělá. Je to užitečná páka: kdokoliv smí kód forknout, ale
-nesmí tomu říkat Praut. Registraci zvaž zvlášť.
+nesmí tomu říkat AgenticDev. Registraci zvaž zvlášť.
 
 ---
 
@@ -50,7 +50,7 @@ nesmí tomu říkat Praut. Registraci zvaž zvlášť.
 ```bash
 git init
 git add .
-git commit -m "Praut Platform"
+git commit -m "AgenticDev"
 git branch -M main
 git remote add origin git@github.com:Praut-Startup-Support/AgenticDev.git
 git push -u origin main
@@ -68,7 +68,7 @@ Zapni v nastavení repozitáře:
 ## 5. První vydání / First release
 
 ```bash
-make verify && make dist && bash dist/praut-install-vps.sh --check
+make verify && make dist && bash dist/agenticdev-install-vps.sh --check
 git tag v0.1.0
 git push --tags
 ```
@@ -103,7 +103,7 @@ Tohle je ta část, kterou lidi vynechávají a pak se diví.
 
 Sekce **Known limitations**. Nemaž ji, dokud ty body neopravíš:
 
-- directors se nepodepisují
+- orchestrační vrstva (directors) není implementovaná
 - není serverová brána před mergem
 - chybí observabilita
 - join tokeny nemají expiraci
@@ -116,7 +116,7 @@ do firmy a zjistí to sám.
 
 ## 8. Zálohy / Backups
 
-`WO_SIGNING_KEY_B64` z `/srv/praut/config/.env` si ulož mimo server. Bez něj
+`WO_SIGNING_KEY_B64` z `/srv/agenticdev/config/.env` si ulož mimo server. Bez něj
 neověříš dřív vydané work ordery a nikdo ti ho nedopočítá.
 
 A obnov si zálohu dřív, než ji budeš potřebovat. Záloha, kterou jsi nikdy

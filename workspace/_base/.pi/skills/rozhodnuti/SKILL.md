@@ -33,5 +33,5 @@ Co z toho plyne, včetně nevýhod.
 3. Pošli na VPS jako precedent:
 
 ```bash
-bin/praut-decision "otázka" "co jsme zvolili" "proč"
+bin/agenticdev-decision "otázka" "co jsme zvolili" "proč"
 ```

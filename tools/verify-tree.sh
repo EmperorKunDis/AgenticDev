@@ -5,7 +5,7 @@ chk(){ if [[ -e "$1" ]]; then echo "  ✓ $2"; else echo "  ✗ CHYBÍ: $1"; fai
 echo "── VPS ──"
 for f in vps/docker-compose.yml vps/Caddyfile vps/sql/001_schema.sql \
          vps/sql/002_seed.sql vps/backup/restic-backup.sh install-vps.sh \
-         vps/mk-mac-installer.sh vps/praut-ctl; do chk "$f" "$f"; done
+         vps/mk-mac-installer.sh vps/agenticdev-ctl; do chk "$f" "$f"; done
 
 echo "── control plane ──"
 for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/app/main.py \
@@ -16,17 +16,26 @@ for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/a
 echo "── workspace (Pi) ──"
 chk workspace/_base/AGENTS.md               "AGENTS.md"
 chk workspace/_base/.pi/settings.json       "nastavení Pi"
-chk workspace/_base/.pi/extensions/praut-git.ts "git extension"
+chk workspace/_base/.pi/extensions/agenticdev-git.ts "git extension"
 for s in git-flow kontext rozhodnuti; do
   chk "workspace/_base/.pi/skills/$s/SKILL.md" "skill $s"; done
 chk workspace/_base/.pi/prompts/hotovo.md   "/hotovo"
-chk workspace/_base/bin/praut-git           "git automatizace"
-chk workspace/_base/bin/praut-decision      "zápis rozhodnutí"
+chk workspace/_base/bin/agenticdev-git           "git automatizace"
+chk workspace/_base/bin/agenticdev-decision      "zápis rozhodnutí"
 for p in discovery design implementation hardening delivery; do
   chk "workspace/_phase/$p/scope" "fáze $p"; done
 
 echo "── značka ──"
-for f in brand/logo.svg brand/mark.svg brand/icon.svg brand/praut.ico; do chk "$f" "$f"; done
+for f in brand/logo.svg brand/mark.svg brand/icon.svg brand/agenticdev.ico; do chk "$f" "$f"; done
+
+echo "── dokumenty ──"
+chk HANDOFF.md              "handoff"
+chk tools/rename-to-agenticdev.sh "přejmenování produktu"
+
+echo "── web ──"
+chk site/index.html  "onepager"
+chk site/CNAME       "doména"
+chk site/logo.svg    "logo"
 
 echo "── pod (sandbox) ──"
 chk pod/compose.yaml          "compose"
@@ -39,12 +48,12 @@ echo "── klienti ──"
 chk install-mac.sh       "macOS"
 chk install-linux.sh     "Linux"
 chk install-windows.ps1  "Windows"
-chk linux/praut.desktop  "ikona na plochu"
-chk linux/praut-launch   "spouštěč"
+chk linux/agenticdev.desktop  "ikona na plochu"
+chk linux/agenticdev-launch   "spouštěč"
 
 echo "── Mac ──"
 chk install-mac.sh "instalace"
-chk launcher/praut "launcher"
+chk launcher/agenticdev "launcher"
 
 echo
 [[ $fail -eq 0 ]] && echo "✓ VŠECHNY CESTY SEDÍ" || echo "✗ NĚCO CHYBÍ"
