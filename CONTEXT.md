@@ -54,10 +54,23 @@ Třída dat, u které nesmí obsah projektu opustit firmu. Vynucuje se tím,
 pod se ke cloudu nedostane, ať si v Pi kdokoli vybere cokoli. Kontrola
 jména modelu v harnessu je jen brzká hláška; závazná je allowlist.
 
+Bez nastaveného lokálního endpointu takový projekt panel nezaloží — bez
+něj by v allowlistu nebylo nic a agent by neměl s čím pracovat.
+
 _Vyhýbej se_: „citlivý projekt" bez upřesnění třídy dat, a hlavně
 představě, že to hlídá jméno modelu — Pi ho umí přepnout za běhu.
 
 Viz [ADR-0004](docs/adr/0004-restricted-vynucuje-egress.md).
+
+## Hotovo
+
+Stav úkolu, který nastane **mergem PR** se zeleným workflow z repozitáře
+projektu. Není to nic, co by někdo odklikl.
+
+_Vyhýbej se_: „done" pro úkol ve stavu `review` — ten čeká na člověka a
+hotový není.
+
+Viz [ADR-0006](docs/adr/0006-hotovo-je-smergovany-pr.md).
 
 ## Připojení stroje
 
