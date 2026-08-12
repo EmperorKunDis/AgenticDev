@@ -56,6 +56,15 @@ services:
       egress: { condition: service_healthy }
     networks: [isolated]
 
+    # Obraz má v ENTRYPOINT harness — spustit ho ale nesmíme hned. Policy
+    # a token leží na tmpfs uvnitř kontejneru a launcher je tam dostane
+    # (`docker cp`) až po startu. Kdyby harness naběhl jako první proces,
+    # nenašel by policy, spadl by a kontejner by skončil — launcher by pak
+    # neměl kam poslat `docker exec` a agent by se nespustil bez chybové
+    # hlášky. Kontejner proto jen čeká; agenta smí odpálit výhradně
+    # harness, kterého launcher spustí po vložení policy.
+    entrypoint: ["sleep", "infinity"]
+
     # Uid hostitele, aby soubory ve workspace patřily člověku a ne rootovi.
     user: "${AGENTICDEV_UID}:${AGENTICDEV_GID}"
 

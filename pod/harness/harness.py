@@ -2,8 +2,13 @@
 """
 Harness — důvěryhodné jádro podu.
 
-Běží jako první proces v kontejneru, ověří policy a teprve pak spustí
-agenta. Co vynucuje a co ne:
+Jediná cesta, jak se v podu spustí agent. Ověří policy a teprve pak ho
+pustí. Launcher harness startuje po tom, co vloží policy na tmpfs
+kontejneru; sám kontejner do té doby jen čeká (viz compose). Obraz má
+harness i v ENTRYPOINT, aby `docker run` nad tímhle obrazem nikdy
+nespustil agenta bez kontroly.
+
+Co vynucuje a co ne:
 
   vynucuje jádro       zápis mimo scope. Repozitář je připojený read-only
                        a povolené cesty jsou přes něj přemountované rw.

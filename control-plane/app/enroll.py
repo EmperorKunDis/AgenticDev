@@ -2,7 +2,17 @@
 Veřejná registrace — JEDINÁ část platformy vystavená do internetu.
 
 Přes Tailscale Funnel je zvenčí dostupná jen cesta /join. Všechno ostatní
-zůstává na tailnetu. Kdo zná heslo, dostane:
+zůstává na tailnetu.
+
+Proč všechny endpointy registrace leží POD /join a stránka na ně odkazuje
+relativně: Funnel připojí cíl `http://<vps>:8080/join` na korytko `/`, a
+cestu požadavku k cíli přilepí. Zvenčí se tedy `/api` promění na
+`/join/api`. Kdyby stránka volala absolutní `/v1/join`, vzniklo by
+`/join/v1/join` a registrace by zvenčí nefungovala — což je přesně to
+místo, kde má fungovat. Na tailnetu se na stejnou stránku dostaneš přes
+`/join/` a relativní odkazy míří tam, kam mají.
+
+Kdo zná heslo, dostane:
 
   1. Tailscale auth key — připojí jeho stroj do tailnetu
   2. instalátor svázaný s touhle instancí
@@ -13,18 +23,18 @@ rate limit na IP i globálně, a exponenciální zpomalení po neúspěších.
 """
 from __future__ import annotations
 
-import base64
 import hashlib
 import os
 import secrets
 import time
-from collections import defaultdict, deque
 from pathlib import Path
 
 import httpx
 from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import HTMLResponse, PlainTextResponse
 from pydantic import BaseModel
+
+from . import ratelimit
 
 router = APIRouter()
 
@@ -45,63 +55,22 @@ INSTALLER_PATH  = Path(os.environ.get("AGENTICDEV_OUT", "/out")) / "agenticdev-i
 #  Omezení pokusů
 # ═══════════════════════════════════════════════════════════════
 # Veřejný endpoint s heslem musí počítat s tím, že ho někdo bude zkoušet
-# hádat. Držíme okno pokusů na IP a druhé globální — samotný per-IP limit
-# nechrání před distribuovaným pokusem z mnoha adres.
+# hádat. Pět pokusů na IP za 15 minut, padesát celkem, pak hodina zámku.
+_limiter = ratelimit.Limiter(window=900, per_ip=5, global_cap=50, lockout=3600)
 
-_WINDOW      = 900       # 15 minut
-_PER_IP      = 5         # pokusů na IP za okno
-_GLOBAL      = 50        # pokusů celkem za okno
-_LOCKOUT     = 3600      # po vyčerpání se IP zamkne na hodinu
-
-_by_ip: dict[str, deque[float]] = defaultdict(deque)
-_locked: dict[str, float] = {}
-_global: deque[float] = deque()
-
-
-def _client_ip(req: Request) -> str:
-    # Za Funnelem i za Caddy chodí skutečná adresa v hlavičce. Bereme
-    # první hodnotu, ale jen z hlaviček, které nám staví náš vlastní proxy.
-    fwd = req.headers.get("x-forwarded-for", "")
-    if fwd:
-        return fwd.split(",")[0].strip()
-    return req.client.host if req.client else "unknown"
-
-
-def _prune(dq: deque[float], now_: float) -> None:
-    while dq and now_ - dq[0] > _WINDOW:
-        dq.popleft()
+_client_ip = ratelimit.client_ip
 
 
 def _check_rate(ip: str) -> None:
-    now_ = time.time()
-
-    until = _locked.get(ip)
-    if until and now_ < until:
-        raise HTTPException(429, f"příliš mnoho pokusů, zkus za {int((until - now_) / 60) + 1} min")
-    if until:
-        del _locked[ip]
-        _by_ip[ip].clear()
-
-    _prune(_global, now_)
-    if len(_global) >= _GLOBAL:
-        raise HTTPException(429, "příliš mnoho pokusů, zkus to za chvíli")
-
-    dq = _by_ip[ip]
-    _prune(dq, now_)
-    if len(dq) >= _PER_IP:
-        _locked[ip] = now_ + _LOCKOUT
-        raise HTTPException(429, "příliš mnoho pokusů, zkus za hodinu")
+    _limiter.check(ip)
 
 
 def _record_attempt(ip: str) -> None:
-    now_ = time.time()
-    _by_ip[ip].append(now_)
-    _global.append(now_)
+    _limiter.record(ip)
 
 
 def _clear_attempts(ip: str) -> None:
-    _by_ip.pop(ip, None)
-    _locked.pop(ip, None)
+    _limiter.clear(ip)
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -150,7 +119,8 @@ class JoinRequest(BaseModel):
     os: str = "mac"
 
 
-@router.post("/v1/join")
+@router.post("/join/api")
+@router.post("/v1/join")            # historický alias, funguje z tailnetu
 def join(body: JoinRequest, request: Request):
     ip = _client_ip(request)
     _check_rate(ip)
@@ -177,12 +147,19 @@ def join(body: JoinRequest, request: Request):
         "fingerprint": f"sha256:{fp}",
         "domain": AGENTICDEV_DOMAIN,
         "tailscale_authkey": key,
-        "installer_url": "/join/installer",
+        # Relativně: stránka si to slepí se svou vlastní adresou, takže to
+        # platí i zvenčí přes Funnel, i z tailnetu.
+        "installer_url": "installer",
         "have_installer": INSTALLER_PATH.is_file(),
     }
 
 
 _REPO = Path("/repo")
+
+
+def _control_plane_url() -> str:
+    return os.environ.get("CONTROL_PLANE_URL") or (
+        f"https://{AGENTICDEV_DOMAIN}" if AGENTICDEV_DOMAIN else "http://localhost:8080")
 
 
 @router.post("/join/installer")
@@ -192,8 +169,12 @@ def installer(body: JoinRequest, request: Request):
 
     macOS dostane soubor vyrobený mk-mac-installerem — nese v sobě join
     token a fingerprint instance, takže se proti cizímu serveru odmítne
-    nainstalovat. Linux dostane skript s doplněnou adresou; token si
-    předává argumentem.
+    nainstalovat. Linux a Windows dostanou skript s doplněnou adresou;
+    heslo si předávají argumentem.
+
+    Windows verze je PowerShell: připraví WSL a uvnitř něj si vyžádá
+    linuxový instalátor. Vydává se tudy, a ne bez hesla, aby se zvenčí
+    nedalo stahovat nic bez průchodu registrací.
     """
     ip = _client_ip(request)
     _check_rate(ip)
@@ -210,22 +191,36 @@ def installer(body: JoinRequest, request: Request):
         f = _REPO / "install-linux.sh"
         if not f.is_file():
             raise HTTPException(503, "install-linux.sh není nasazený")
-        cp = os.environ.get("CONTROL_PLANE_URL") or (
-            f"https://{AGENTICDEV_DOMAIN}" if AGENTICDEV_DOMAIN else "http://localhost:8080")
-        body_txt = f.read_text().replace("__CONTROL_PLANE__", cp)
-    else:
-        if not INSTALLER_PATH.is_file():
-            raise HTTPException(
-                503, "instalátor ještě nebyl vygenerován — na serveru spusť: sudo agenticdev-mac-installer")
-        body_txt = INSTALLER_PATH.read_text()
+        return PlainTextResponse(
+            f.read_text().replace("__CONTROL_PLANE__", _control_plane_url()),
+            headers={"content-disposition": 'attachment; filename="agenticdev-install.sh"'},
+        )
+
+    if body.os == "windows":
+        f = _REPO / "install-windows.ps1"
+        if not f.is_file():
+            raise HTTPException(503, "install-windows.ps1 není nasazený")
+        return PlainTextResponse(
+            f.read_text().replace("__CONTROL_PLANE__", _control_plane_url()),
+            headers={"content-disposition": 'attachment; filename="agenticdev-install.ps1"'},
+        )
+
+    if not INSTALLER_PATH.is_file():
+        raise HTTPException(
+            503, "instalátor ještě nebyl vygenerován — na serveru spusť: sudo agenticdev-mac-installer")
 
     return PlainTextResponse(
-        body_txt,
+        INSTALLER_PATH.read_text(),
         headers={"content-disposition": 'attachment; filename="agenticdev-install.sh"'},
     )
 
 
+# Obě varianty, s lomítkem i bez. Přesměrování by tady bylo horší než
+# duplicitní route: zvenčí by Location mířila na cestu, kterou Funnel
+# nemapuje. Stránka si adresu endpointů skládá ze své vlastní (viz
+# join.html), takže jí je jedno, jak se k ní kdo dostal.
 @router.get("/join", include_in_schema=False)
+@router.get("/join/", include_in_schema=False)
 def join_page():
     p = Path(__file__).parent / "join.html"
     if not p.is_file():

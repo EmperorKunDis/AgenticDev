@@ -200,7 +200,7 @@ else
   ask PROVIDER "Volba" "1"
   case "$PROVIDER" in
     2) MODEL_BACKEND=anthropic; MODEL_BASE_URL=https://api.anthropic.com/v1
-       DEFAULT_MODEL=claude-sonnet-4-6; PROV_HOST=api.anthropic.com ;;
+       DEFAULT_MODEL=claude-sonnet-5; PROV_HOST=api.anthropic.com ;;
     3) MODEL_BACKEND=ollama;    MODEL_BASE_URL=http://host.docker.internal:11434
        DEFAULT_MODEL=local/qwen2.5-coder:32b; PROV_HOST="" ;;
     *) MODEL_BACKEND=openai;    MODEL_BASE_URL=https://api.openai.com/v1
@@ -529,9 +529,14 @@ for i in $(seq 1 60); do
 done
 printf " ${GRN}✓${OFF}\n"
 
-# sandbox projekt ať smí model, který jsi vybral
+# Sandbox projekt narovnat na tuhle instanci: model, který jsi vybral, a
+# skutečná adresa gitu. V seedu je zástupné 'vps', které se nikde
+# nepřeloží — bez tohohle by první klik na ikonu skončil u repozitáře,
+# ke kterému se nedá připojit.
 dc exec -T postgres psql -qtAX -U agenticdev -d agenticdev -c \
-  "UPDATE project SET model_allowlist = ARRAY['$DEFAULT_MODEL','$LOCAL_MODEL']
+  "UPDATE project
+      SET model_allowlist = ARRAY['$DEFAULT_MODEL','$LOCAL_MODEL'],
+          repo_url = 'ssh://git@$VPS_HOST:2222/$FORGEJO_ADMIN_USER/sandbox.git'
     WHERE code = 'sandbox'" >>"$LOG" 2>&1 || true
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -658,8 +663,15 @@ if tailscale funnel --bg --https=8443 "http://${VPS_HOST}:8080/join" >>"$LOG" 2>
     JOIN_URL="https://${TS_NAME}:8443/"
     ok "veřejně dostupné: $JOIN_URL"
     info "vystavena jen cesta /join, nic jiného"
-    sed -i "s|^JOIN_URL=.*|JOIN_URL=$JOIN_URL|" $ENVF 2>/dev/null \
-      || echo "JOIN_URL=$JOIN_URL" >>$ENVF
+    # `sed` končí nulou i když nic nenahradil, takže se na jeho návratový
+    # kód nedá vázat zápis chybějícího řádku — bez téhle podmínky se
+    # JOIN_URL do .env při čisté instalaci nikdy nedostal a
+    # `agenticdev-info` pak tvrdil, že Funnel neběží.
+    if grep -q '^JOIN_URL=' $ENVF; then
+      sed -i "s|^JOIN_URL=.*|JOIN_URL=$JOIN_URL|" $ENVF
+    else
+      echo "JOIN_URL=$JOIN_URL" >>$ENVF
+    fi
   else
     warn "Funnel běží, ale nezjistil jsem veřejné jméno — 'tailscale funnel status'"
   fi

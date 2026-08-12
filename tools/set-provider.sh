@@ -46,7 +46,7 @@ case "${1:-}" in
   anthropic)
     set_kv MODEL_BACKEND anthropic
     set_kv MODEL_BASE_URL https://api.anthropic.com
-    set_kv DEFAULT_MODEL "${2:-claude-sonnet-4-6}"
+    set_kv DEFAULT_MODEL "${2:-claude-sonnet-5}"
     set_kv EGRESS_ALLOWLIST "api.anthropic.com,registry.npmjs.org,pypi.org"
     echo "→ Anthropic API. Doplň MODEL_API_KEY"
     ;;

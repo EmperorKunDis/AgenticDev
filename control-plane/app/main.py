@@ -30,6 +30,34 @@ _SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(
 app = FastAPI(title="AgenticDev Control Plane", version="0.1.0")
 
 
+# ═══════════════════════════════════════════════════════════════
+#  Co smí projít zvenčí
+# ═══════════════════════════════════════════════════════════════
+# Instalátor publikuje přes Tailscale Funnel jedinou cestu — /join.
+# Tohle je druhý zámek na stejných dveřích: kdyby někdo Funnel omylem
+# namířil na celý control plane (nebo změnil mount point), veřejně se
+# stejně nedostane nikam jinam než k registraci.
+#
+# Tailscaled značí požadavky z Funnelu hlavičkou Tailscale-Funnel-Request.
+# Testujeme jen JEJÍ PŘÍTOMNOST, ne hodnotu: útočník si ji může přidat
+# sám, čímž se pro sebe omezí ještě víc, ale odebrat cizí hlavičku,
+# kterou přilepí tailscaled, nedokáže.
+_PUBLIC_PREFIXES = ("/join",)
+
+
+def _via_funnel(scope_headers: list[tuple[bytes, bytes]]) -> bool:
+    return any(k.lower() == b"tailscale-funnel-request" for k, _ in scope_headers)
+
+
+@app.middleware("http")
+async def _funnel_gate(request, call_next):
+    if _via_funnel(request.scope.get("headers") or []):
+        path = request.url.path
+        if not any(path == p or path.startswith(p + "/") for p in _PUBLIC_PREFIXES):
+            return Response(status_code=404)
+    return await call_next(request)
+
+
 def db():
     return psycopg.connect(DB, row_factory=dict_row, autocommit=True)
 
@@ -419,13 +447,13 @@ app.include_router(_enroll_router)
 
 @app.on_event("startup")
 def _startup():
-    # Tabulku nastavení zakládáme tady: init skripty Postgresu běží jen
-    # nad prázdnou databází, u existující instalace by se nespustily.
-    from . import settings as _cfg
+    # Migrace jdou tudy: init skripty Postgresu běží jen nad prázdnou
+    # databází, u existující instalace by se nespustily.
+    from . import migrate as _mig
     try:
-        _cfg.ensure_table()
+        _mig.run()
     except Exception as e:                       # noqa: BLE001
-        print(f"[settings] tabulku se nepodařilo založit: {e}")
+        print(f"[migrace] neproběhly: {e}")
 
 _HERE = _P(__file__).parent
 _REPO = _P("/repo")

@@ -46,6 +46,34 @@ case "${1:-status}" in
     printf "  a tam spusť:\n    ${Y}bash ~/Downloads/agenticdev-install-mac.sh${O}\n\n"
     ;;
 
+  funnel)
+    # Zvenčí smí být vidět jedna jediná cesta — registrace. Funnel jede
+    # na 8443, aby si nelezl do cesty s Caddy na 443.
+    printf "\n${B}▸ Veřejná registrace${O}\n"
+    if ! tailscale funnel --bg --https=8443 "http://${VPS_HOST}:8080/join"; then
+      printf "${R}  ✗ Funnel se nezapnul${O}\n"
+      echo "    Uzel potřebuje v ACL atribut funnel:"
+      echo "    https://login.tailscale.com/admin/acls → Funnel → Add Funnel to policy"
+      exit 1
+    fi
+    TS_NAME=$(tailscale status --json 2>/dev/null \
+              | grep -oE '"DNSName"[[:space:]]*:[[:space:]]*"[^"]+"' \
+              | head -1 | sed 's/.*"\([^"]*\)"$/\1/' | sed 's/\.$//')
+    [[ -n "$TS_NAME" ]] || die "nezjistil jsem veřejné jméno — 'tailscale funnel status'"
+    URL="https://${TS_NAME}:8443/"
+    if grep -q '^JOIN_URL=' "$ENVF"; then
+      sed -i "s|^JOIN_URL=.*|JOIN_URL=$URL|" "$ENVF"
+    else
+      echo "JOIN_URL=$URL" >>"$ENVF"
+    fi
+    printf "${G}  ✓ %s${O}\n" "$URL"
+    printf "  ${D}ověř zvenčí (ne z tailnetu):  curl %shealth${O}\n\n" "$URL"
+    ;;
+
+  smoke)
+    (cd "$SRC" && bash tools/smoke-vps.sh "${@:2}")
+    ;;
+
   backup-now)
     systemctl start agenticdev-backup.service
     journalctl -u agenticdev-backup.service -n 40 --no-pager
@@ -87,7 +115,9 @@ case "${1:-status}" in
 
     mac               vygeneruje instalátor Macu (svázaný s tímhle VPS)
     info              přihlašovací údaje a odkazy
+    funnel            (znovu) zapne veřejnou registraci a vypíše odkaz
 
+    smoke             projede platformu end-to-end a řekne, co nesedí
     backup-now        okamžitá záloha
     backup-check      seznam snapshotů
     verify            kontrola stromu repa

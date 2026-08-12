@@ -24,7 +24,9 @@ hope for the best. AgenticDev inverts that:
   all of it is composed on the server per phase and per project, not
   configured on each laptop.
 - **Everything is written back.** Decisions, runs, costs, and artifacts land
-  in a Postgres ledger with a hash chain, not in someone's chat history.
+  in Postgres on your own server, not in someone's chat history. The audit
+  trail on top of them is append-only and hash-chained — the database
+  refuses an `UPDATE`, a `DELETE`, or a `TRUNCATE` on it.
 - **Onboarding is one link.** A new machine joins with a password and
   registers itself; you revoke it from the panel.
 
@@ -63,7 +65,18 @@ The installer checks both and tells you if either is missing.
 
 ## Install
 
+Step-by-step runbook, including what to check afterwards and what to do when
+it breaks: **[DEPLOY.md](DEPLOY.md)** (Czech). The short version:
+
 ### 1. Server — once
+
+Check the machine first, then install. The preflight touches nothing; it
+just tells you what would break the install.
+
+```bash
+scp tools/preflight-vps.sh root@your-vps:/root/
+ssh root@your-vps 'bash /root/preflight-vps.sh'
+```
 
 Download the release artifact and its checksum, verify, then run it. Do not
 pipe it into bash; the installer refuses to run that way on purpose.
@@ -79,6 +92,16 @@ ssh root@your-vps 'bash /root/agenticdev-install-vps.sh'
 
 It asks five questions and does the rest: Docker, firewall, SSH hardening,
 Tailscale, Postgres, Forgejo, MinIO, Caddy, the control plane, daily backups.
+
+Then verify the deployment actually works, rather than merely starts:
+
+```bash
+ssh root@your-vps 'agenticdev-ctl smoke'
+```
+
+It exercises the audit trail, enrollment, the panel, work-order issuance and
+signing, and every phase's scope. Non-zero exit means something is wrong and
+it says what.
 
 Useful flags:
 
@@ -96,6 +119,12 @@ When it finishes it prints two links:
 | **Enrollment page** | your team | public internet |
 
 You pick both passwords during the install.
+
+If you give the instance a **public domain**, that table changes: Caddy then
+serves the panel and the API on that domain too, guarded by the admin
+password alone. Leave the domain empty to keep everything except enrollment
+on the tailnet, which is the safer default and what the rest of this
+document assumes.
 
 ### 2. Clients — unlimited machines, anywhere
 
@@ -125,6 +154,10 @@ Model provider and API key, egress allowlist, both passwords, lease duration,
 Tailscale keys, and SMTP are editable in the panel and take effect
 immediately. Settings that need a container restart live in
 `/srv/agenticdev/config/.env` and the panel shows them read-only.
+
+Projects, tasks, a project's **active phase**, release channels, machine
+revocation, and the kill switch are in there too. Switching a project's phase
+is the lever that changes what an agent may write to — see below.
 
 ---
 
@@ -186,6 +219,7 @@ Each phase has a `scope` file listing the paths it may write to:
 | implementation | `src/**`, `tests/**`, ADRs |
 | hardening | + `infra/**` |
 | delivery | `docs/**`, README, CHANGELOG |
+| support | `src/**`, `tests/**`, `docs/**`, ADRs |
 
 The control plane sends that list to the launcher, which mounts the
 repository read-only and remounts exactly those paths writable. So changing
@@ -221,6 +255,8 @@ You can build and verify it yourself:
 make verify     # check that every path the tree promises actually exists
 make dist       # build dist/agenticdev-install-vps.sh and its checksum
 make check-dist # run the built artifact's own --check
+make preflight  # check a fresh VPS before installing
+make smoke      # verify a deployment end to end (run on the VPS)
 ```
 
 `make dist` is deterministic: building the same commit twice produces the

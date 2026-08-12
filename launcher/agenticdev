@@ -2,7 +2,7 @@
 # ═══════════════════════════════════════════════════════════════
 #  agenticdev — spouštěč pracovního prostředí
 #
-#  Dvojklik na ikonu → vyber projekt → Claude Code je nastavený.
+#  Dvojklik na ikonu → vyber projekt → Pi je nastavené.
 #  VPS pošle subagenty, hooky, oprávnění a kontext podle fáze.
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail

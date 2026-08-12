@@ -119,7 +119,12 @@
 const $ = s => document.querySelector(s);
 let DATA = null, PW = '', OS = 'mac';
 
-const ORIGIN = location.origin;
+// Endpointy registrace se skládají k adrese TÉHLE stránky, ne ke kořeni.
+// Zvenčí přes Tailscale Funnel jsme na kořeni a server nás vidí pod
+// /join/; z tailnetu jsme přímo na /join/. Absolutní cesta by fungovala
+// jen v jednom z těch dvou případů.
+const BASE = location.origin +
+  (location.pathname.endsWith('/') ? location.pathname : location.pathname + '/');
 
 function cmds() {
   if (!DATA) return ['—', '—'];
@@ -129,15 +134,17 @@ function cmds() {
   if (OS === 'mac') {
     net = k ? `brew install --cask tailscale\nsudo tailscale up --authkey ${k}`
             : `# Nainstaluj Tailscale z https://tailscale.com/download/mac\n# a přihlas se do sítě správce.`;
-    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh`;
+    inst = `curl -fsS -X POST ${BASE}installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh`;
   } else if (OS === 'linux') {
     net = k ? `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up --authkey ${k}`
             : `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up`;
-    inst = `curl -fsS -X POST ${ORIGIN}/join/installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh '${PW}'`;
+    inst = `curl -fsS -X POST ${BASE}installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh '${PW}'`;
   } else {
     net = k ? `winget install --id tailscale.tailscale\ntailscale up --authkey ${k}`
             : `winget install --id tailscale.tailscale\ntailscale up`;
-    inst = `# PowerShell jako správce:\nirm ${ORIGIN}/install-windows.ps1 -OutFile agenticdev-install.ps1\npowershell -ExecutionPolicy Bypass -File agenticdev-install.ps1 -Token '${PW}'`;
+    // PowerShell 5.1 neumí -OutFile u POSTu spolehlivě, proto přes
+    // Invoke-WebRequest a zápis obsahu.
+    inst = `# PowerShell jako správce:\n$b = '{"password":"${PW}","os":"windows"}'\nInvoke-WebRequest -Uri '${BASE}installer' -Method Post -ContentType 'application/json' -Body $b -OutFile agenticdev-install.ps1\npowershell -ExecutionPolicy Bypass -File .\\agenticdev-install.ps1 -Token '${PW}'`;
   }
   return [net, inst];
 }
@@ -158,7 +165,7 @@ async function go() {
   $('#err').className = 'msg';
 
   try {
-    const r = await fetch('/v1/join', {
+    const r = await fetch(BASE + 'api', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ password: pw })

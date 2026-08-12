@@ -119,11 +119,14 @@ OK "tailscale"
 
 # ═══ 4. Instalace uvnitř WSL ═══════════════════════════════════
 Step "AgenticDev"
+# Uvnitř WSL běží Linux, takže si musíme vyžádat LINUXOVÝ instalátor.
+# Bez "os":"linux" vydá server ten pro macOS a ten se v WSL odmítne
+# spustit ("Tenhle instalátor je pro macOS").
 $inner = @"
 set -e
 curl -fsS -X POST '$ControlPlane/join/installer' \
   -H 'content-type: application/json' \
-  -d '{"password":"$Token"}' -o /tmp/agenticdev-install.sh
+  -d '{"password":"$Token","os":"linux"}' -o /tmp/agenticdev-install.sh
 bash /tmp/agenticdev-install.sh '$Token'
 rm -f /tmp/agenticdev-install.sh
 "@ -replace "`r", ""

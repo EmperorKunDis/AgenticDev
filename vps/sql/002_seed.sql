@@ -6,7 +6,7 @@ INSERT INTO client (name, ico) VALUES ('AgenticDev interní', NULL);
 
 INSERT INTO project (client_id, code, repo_url, data_class, model_allowlist)
 SELECT id, 'sandbox', 'ssh://git@vps:2222/agenticdev/sandbox.git', 'internal',
-       ARRAY['claude-sonnet-4-6','local/qwen2.5-coder:32b']
+       ARRAY['claude-sonnet-5','local/qwen2.5-coder:32b']
 FROM client WHERE name = 'AgenticDev interní';
 
 INSERT INTO phase (project_id, kind, order_idx, active)
@@ -32,7 +32,7 @@ VALUES ('feature-director', '0.1.0', 'stable', '^0.1',
         'file:///directors/feature-director', 'PENDING');
 
 INSERT INTO agent_profile (role, semver, prompt_ref, model_allowlist) VALUES
-  ('architect',   '0.1.0', 'workers/architect.md',   ARRAY['claude-sonnet-4-6']),
-  ('implementer', '0.1.0', 'workers/implementer.md', ARRAY['claude-sonnet-4-6']),
-  ('tester',      '0.1.0', 'workers/tester.md',      ARRAY['claude-sonnet-4-6']),
-  ('reviewer',    '0.1.0', 'workers/reviewer.md',    ARRAY['claude-sonnet-4-6']);
+  ('architect',   '0.1.0', 'workers/architect.md',   ARRAY['claude-sonnet-5']),
+  ('implementer', '0.1.0', 'workers/implementer.md', ARRAY['claude-sonnet-5']),
+  ('tester',      '0.1.0', 'workers/tester.md',      ARRAY['claude-sonnet-5']),
+  ('reviewer',    '0.1.0', 'workers/reviewer.md',    ARRAY['claude-sonnet-5']);
