@@ -1,8 +1,8 @@
 """
-Workspace API — servíruje konfiguraci Claude Code na stanice.
+Workspace API — servíruje konfiguraci Pi na stanice.
 
 Tohle je ta modrá vrstva z náčrtu: „serving directors".
-VPS neposílá běžícího agenta. Posílá NASTAVENÍ Claude Code
+VPS neposílá běžícího agenta. Posílá NASTAVENÍ Pi
 pro daný projekt a fázi — subagenty, hooky, oprávnění,
 slash příkazy, CLAUDE.md, MCP servery.
 
@@ -96,8 +96,8 @@ def list_for_workstation(ws: dict = Depends(current_ws)):
 @router.get("/v1/workspace/{code}/bundle")
 def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
     """
-    Kompletní nastavení Claude Code pro projekt v jeho aktivní fázi.
-    Launcher tohle rozbalí do pracovního adresáře a spustí `claude`.
+    Kompletní nastavení Pi pro projekt v jeho aktivní fázi.
+    Launcher tohle rozbalí do pracovního adresáře a spustí `pi`.
     """
     with db() as c:
         proj = c.execute(
