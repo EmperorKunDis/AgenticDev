@@ -72,6 +72,18 @@ hotový není.
 
 Viz [ADR-0006](docs/adr/0006-hotovo-je-smergovany-pr.md).
 
+## Prostředí
+
+Vrstva, kterou server posílá do projektu — nastavení, skills, hooky,
+extension a instrukce podle fáze. Je **sdílená a jediná**: mění se na
+serveru, ne u lidí. Nepatří do ní přihlášení k modelu ani sessions, ty má
+každý vlastní.
+
+_Vyhýbej se_: „prostředí" pro adresář `~/.pi/agent` na VPS — v tom je to,
+co je na člověka, tedy pravý opak.
+
+Viz [ADR-0007](docs/adr/0007-prostredi-sdilene-prihlaseni-na-cloveka.md).
+
 ## Připojení stroje
 
 První kontakt člověka s instancí: na registrační stránce prokáže znalost
