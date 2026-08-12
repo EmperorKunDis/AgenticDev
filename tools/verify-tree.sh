@@ -11,7 +11,8 @@ echo "── control plane ──"
 for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/app/main.py \
          control-plane/app/admin.py control-plane/app/workspace.py \
          control-plane/app/dashboard.html control-plane/app/enroll.py \
-         control-plane/app/join.html control-plane/app/settings.py; do chk "$f" "$f"; done
+         control-plane/app/join.html control-plane/app/settings.py \
+         control-plane/app/migrate.py control-plane/app/ratelimit.py; do chk "$f" "$f"; done
 
 echo "── workspace (Pi) ──"
 chk workspace/_base/AGENTS.md               "AGENTS.md"
@@ -22,7 +23,9 @@ for s in git-flow kontext rozhodnuti; do
 chk workspace/_base/.pi/prompts/hotovo.md   "/hotovo"
 chk workspace/_base/bin/agenticdev-git           "git automatizace"
 chk workspace/_base/bin/agenticdev-decision      "zápis rozhodnutí"
-for p in discovery design implementation hardening delivery; do
+# Každá fáze z enumu phase_kind musí mít scope — projekt přepnutý do fáze
+# bez něj by launcher nesestavil a bundle by vracel 400.
+for p in discovery design implementation hardening delivery support; do
   chk "workspace/_phase/$p/scope" "fáze $p"; done
 
 echo "── značka ──"
@@ -30,7 +33,12 @@ for f in brand/logo.svg brand/mark.svg brand/icon.svg brand/agenticdev.ico; do c
 
 echo "── dokumenty ──"
 chk HANDOFF.md              "handoff"
+chk DEPLOY.md               "postup nasazení"
 chk tools/rename-to-agenticdev.sh "přejmenování produktu"
+
+echo "── nasazení ──"
+chk tools/preflight-vps.sh  "preflight"
+chk tools/smoke-vps.sh      "smoke test"
 
 echo "── web ──"
 chk site/index.html  "onepager"

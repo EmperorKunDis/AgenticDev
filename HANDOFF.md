@@ -40,39 +40,49 @@ Pozor: `Praut s.r.o.` jako licencor se **nemění** ani v jedné variantě.
 
 ## 2. Co nikdy neběželo
 
-Nic z toho nebylo vyzkoušeno proti reálnému systému. Kód se parsuje a
-struktura sedí, ale to je všechno.
+Serverová část už proti reálnému Postgresu a běžícímu control plane
+běžela (viz sekci 3). Tohle je zbytek, který pořád stojí jen na tom, že
+se kód parsuje:
 
 | Co | Riziko |
 |---|---|
 | **Sandbox (pod)** | mounty, proxy a uid nikdy neběžely proti Dockeru |
 | **Windows klient** | WSL2 cesta, `wslpath`, zástupce s ikonou |
 | **Linux klient** | detekce správce balíčků, ikona v nabídce |
-| **Registrační stránka** | Funnel, rate limit v provozu, Tailscale auth key |
-| **Admin panel → nastavení** | tabulka `setting`, uložení, projev bez restartu |
+| **Tailscale Funnel** | vystavení `/join` zvenčí, mapování cest, auth key |
+| **Caddy v režimu public** | vydání certifikátu, `handle` bloky |
 | **Ikony** | `.icns` se generuje až na macOS přes `iconutil` |
 | **Release workflow** | podpis přes cosign, reprodukovatelnost v CI |
 
 **Testovat v tomhle pořadí** — každý krok staví na předchozím:
 
-1. Server na čistém VPS podle README, bez znalostí navíc
-2. `curl https://<host>.ts.net:8443/join/health` z mobilních dat (ne z tailnetu)
-3. Registrační stránka v prohlížeči, špatné heslo, pak správné
-4. macOS klient až do ikony na ploše
-5. Klik na ikonu → naběhne pod → agent odpoví
-6. Zápis mimo scope musí selhat na EROFS
-7. Admin panel, změna modelu, projeví se bez restartu
-8. Linux klient, Windows klient
-9. `git tag v0.1.0` → workflow → draft release
+1. `bash tools/preflight-vps.sh` na čistém VPS
+2. Server podle [DEPLOY.md](DEPLOY.md), bez znalostí navíc
+3. `agenticdev-ctl smoke` — musí projít celý
+4. `curl https://<host>.ts.net:8443/health` z mobilních dat (ne z tailnetu).
+   Funnel připojuje `/join` na korytko `/`, takže veřejná cesta ke
+   health je `/health`, ne `/join/health`.
+5. Registrační stránka v prohlížeči, špatné heslo, pak správné
+6. macOS klient až do ikony na ploše
+7. Klik na ikonu → naběhne pod → agent odpoví
+8. Zápis mimo scope musí selhat na EROFS
+9. Linux klient, Windows klient
+10. `git tag v0.1.0` → workflow → draft release
 
 ---
 
 ## 3. Co je hotové a ověřené
 
 - Build je **reprodukovatelný** — dvě sestavení dala stejný součet
-- `make verify` projde, všech 16 shell skriptů se parsuje
-- Registrační endpoint otestován jednotkově: špatné heslo 401, po pěti
-  pokusech 429, IP zamčená
+- `make verify` projde, všech 19 shell skriptů se parsuje
+- Schéma se nasadí na čistý Postgres 16 s pgvectorem beze změn
+- Proti běžícímu control plane prošlo 38 kontrol `tools/smoke-vps.sh`:
+  zápis do ledgeru, idempotence, odmítnutí přepisu i smazání, celistvost
+  řetězu hashů, registrace stroje, přihlášení device keyem, vydání work
+  orderu, **ověření jeho ed25519 podpisu**, heartbeat, release, scope
+  všech šesti fází, panel a maskování tajemství
+- Registrace: špatné heslo 401, po pěti pokusech 429, IP zamčená
+- Přihlášení do panelu má stejné omezení pokusů (dřív žádné nemělo)
 - 12 vlastností izolace ověřeno proti `pod/compose.yaml`
 - V dokumentaci nezbyly odkazy na neexistující cesty
 
@@ -98,8 +108,7 @@ Pořadí, v jakém by se to mělo řešit, je v README v sekci o omezeních.
 
 ## 5. Drobnosti k dodělání
 
-- [ ] `site/index.html` — nahradit `DOPLN_FORM_ID` skutečným ID z Formspree.
-      Nasazovací workflow schválně spadne, dokud to nikdo neudělá.
+- [x] `site/index.html` — ID formuláře doplněné, workflow projde
 - [ ] DNS: `CNAME agenticdev → agenticdev-startup-support.github.io.`
 - [ ] Settings → Pages → Source: **GitHub Actions**
 - [ ] Settings → Actions → Workflow permissions: **Read and write**
@@ -131,3 +140,24 @@ tiše nechránit nic.
 **Dokumentace popisovala věci, které v kódu nebyly.** Stalo se to opakovaně
 (pod, harness, egress-proxy, directors, `.claude/settings.json`). Než něco
 napíšeš do README, ověř `grep`em, že to existuje.
+
+**Na `event` nesmí být pravidlo (RULE).** Append-only vynucuje trigger
+`event_no_change`, ne `CREATE RULE ... DO INSTEAD NOTHING`. Pravidlo na
+UPDATE nebo INSERT totiž v Postgresu zakáže `INSERT ... ON CONFLICT` na
+téže tabulce — a na tom stojí idempotentní zápis do ledgeru. S pravidlem
+selhal **každý** zápis do auditní stopy, tedy skoro každý endpoint.
+`tools/smoke-vps.sh` to kontroluje; kdyby to někdo vrátil, chytí se to tam.
+
+**Migrace patří do `control-plane/app/migrate.py`.** Soubory ve
+`vps/sql/` běží jen nad prázdnou databází — u instalace, která už jednou
+naběhla, se nespustí nikdy. Změna schématu, která nemá migraci, se na
+existujících instancích neprojeví.
+
+**Fáze bez adresáře v `workspace/_phase/` rozbije projekt.** Enum
+`phase_kind` a `PHASES` v `admin.py` musí souhlasit s tím, co je na disku —
+jinak přepnutí do takové fáze vrátí 400 a stanice si nestáhne nastavení.
+`make verify` to kontroluje.
+
+**Barvy v shellu se jmenují `G Y R B D O`.** Nepřiřazuj do nich nic
+jiného. Odpověď serveru uložená do `$R` nebo `$B` se pak vypíše jako
+formát `printf` a rozsype výstup.

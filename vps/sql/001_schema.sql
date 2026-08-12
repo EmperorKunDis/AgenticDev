@@ -229,9 +229,22 @@ END $$ LANGUAGE plpgsql;
 CREATE TRIGGER event_chain_trg BEFORE INSERT ON event
   FOR EACH ROW EXECUTE FUNCTION event_chain();
 
--- Append-only vynuceno na úrovni práv
-CREATE RULE event_no_update AS ON UPDATE TO event DO INSTEAD NOTHING;
-CREATE RULE event_no_delete AS ON DELETE TO event DO INSTEAD NOTHING;
+-- Append-only. Vynuceno triggerem, ne pravidlem: RULE na UPDATE nebo
+-- INSERT znemožní `INSERT ... ON CONFLICT` na téže tabulce, a na tom
+-- stojí idempotence zápisu do ledgeru (invariant P6). Trigger navíc
+-- selže nahlas — pravidlo `DO INSTEAD NOTHING` mazání tiše zahodilo,
+-- takže se úprava ledgeru tvářila jako úspěšná.
+CREATE OR REPLACE FUNCTION event_append_only() RETURNS trigger AS $$
+BEGIN
+  RAISE EXCEPTION 'event je append-only, % není povolený', TG_OP
+    USING HINT = 'Auditní stopa se nepřepisuje. Zapiš opravný záznam.';
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER event_no_change BEFORE UPDATE OR DELETE ON event
+  FOR EACH ROW EXECUTE FUNCTION event_append_only();
+
+CREATE TRIGGER event_no_truncate BEFORE TRUNCATE ON event
+  FOR EACH STATEMENT EXECUTE FUNCTION event_append_only();
 
 -- ─── Kill switch ───────────────────────────────────────────────
 CREATE TABLE platform_state (

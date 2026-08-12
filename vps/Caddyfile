@@ -1,4 +1,16 @@
-# Jediný veřejně dostupný vstup. Vše ostatní jen přes tailnet.
+# Caddy se startuje JEN v režimu public (profil "public" v compose), tedy
+# když má instance doménu. V režimu tailnet neběží a platforma je vidět
+# jen po tailnetu.
+#
+# CO JE TÍMHLE VIDĚT: pokud je AGENTICDEV_DOMAIN veřejná doména s veřejným
+# A záznamem, je tímhle vstupem z internetu dostupný celý control plane
+# včetně admin panelu — chráněný jedním heslem. To je vědomý kompromis
+# režimu public, ne nedopatření; panel má omezení pokusů, ale heslo je
+# heslo. Kdo to nechce, nechá doménu prázdnou a jede po tailnetu, kde je
+# zvenčí publikovaná jen registrace přes Funnel.
+#
+# U domény *.ts.net je to jinak: takovou doménu veřejné DNS nepřeloží,
+# takže sem stejně dosáhne jen tailnet.
 {
 	email {$SMTP_FROM}
 }
@@ -12,8 +24,17 @@
 
 	encode zstd gzip
 
-	# Control plane API — pro pody na tailnetu
+	# X-Forwarded-For doplňuje reverse_proxy sám a control plane na něm
+	# staví omezení pokusů o heslo. Nepřepisovat: kdyby sem chodila adresa
+	# Caddy místo klientovy, limit by po pěti pokusech zamkl celý svět.
+
+	# Control plane API — pro stanice a pody na tailnetu
 	handle /v1/* {
+		reverse_proxy control-plane:8080
+	}
+
+	# Registrace strojů
+	handle /join* {
 		reverse_proxy control-plane:8080
 	}
 

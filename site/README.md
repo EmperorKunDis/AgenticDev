@@ -9,16 +9,13 @@ Jedna statická stránka, dvojjazyčně, nasazuje se na GitHub Pages.
 
 ### 1. Formulář
 
-V `index.html` je `action="https://formspree.io/f/DOPLN_FORM_ID"`.
-Nasazovací workflow **schválně spadne**, dokud to nedoplníš — sbírat
-adresy do prázdna je horší než formulář nemít.
+Doplněný je — `index.html` posílá na `https://formspree.io/f/xbgroknv`.
+Nasazovací workflow kontroluje, že tam nezůstal zástupný `DOPLN_FORM_ID`,
+a když ano, **schválně spadne**: sbírat adresy do prázdna je horší než
+formulář nemít.
 
-Založ si formulář na [formspree.io](https://formspree.io) (zdarma 50
-odeslání za měsíc), zkopíruj ID a nahraď ho:
-
-```bash
-sed -i '' 's|DOPLN_FORM_ID|tvoje-id|' site/index.html
-```
+Když formulář přesměrováváš jinam, změň `action` ve `<form id="f">` a
+ověř, že odesílání vrací 200 — stránka hlásí úspěch podle stavového kódu.
 
 Alternativy, kdyby ti Formspree nesedělo: [Tally](https://tally.so),
 [Buttondown](https://buttondown.com) (dělaný na newslettery, zdarma do
@@ -68,6 +65,11 @@ Ručně jde pustit z Actions → pages → Run workflow.
 
 Jazyk se přepíná v prohlížeči přes `localStorage`, výchozí se hádá z
 nastavení prohlížeče. Bez JavaScriptu se zobrazí česká verze.
+
+Každý text existuje dvakrát — `<span class="cs">` a `<span class="en">`.
+Když přidáváš odstavec, přidej obě varianty; jinak ve druhém jazyce
+zmizí. Schéma izolace je výjimka: jsou to dva celé bloky `<pre>`,
+protože v jednom by se rozsypalo zarovnání.
 
 ---
 

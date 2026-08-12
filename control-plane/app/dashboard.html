@@ -216,11 +216,15 @@
 
   <!-- ── TÝM ── -->
   <section id="tym">
-    <h2>Připojení nového Macu</h2>
+    <h2>Připojení nového stroje</h2>
     <div class="panel">
-      <p style="margin-bottom:10px">Pusť na tom Macu tenhle jeden řádek:</p>
+      <p style="margin-bottom:10px">Pošli tenhle odkaz. Funguje z celého světa,
+      pro macOS, Linux i Windows:</p>
       <pre id="joinCmd">–</pre>
-      <p class="hint">Po doběhnutí má člověk na ploše ikonu <strong>AgenticDev — Začít práci</strong>. Nic dalšího nepotřebuje.</p>
+      <p class="hint">Heslo pro připojení posílej <strong>zvlášť</strong>, jiným kanálem
+      než odkaz. Najdeš i změníš ho v <em>Nastavení → Přístup</em>.
+      Po doběhnutí má člověk na ploše ikonu <strong>AgenticDev</strong> a nic dalšího
+      nepotřebuje.</p>
     </div>
 
     <h2>Pracovní stanice</h2>
@@ -363,14 +367,30 @@ async function newTask(){
 }
 
 // ── projekty ──
+const PHASES = ['discovery','design','implementation','hardening','delivery','support'];
+
 async function loadProjects(){
   const ps = await api('/v1/projects');
-  $('#projects').innerHTML = ps.length ? `<table><tr><th>Kód</th><th>Klient</th><th>Data</th><th>Úkolů</th><th>Útrata / měsíc</th></tr>` +
+  $('#projects').innerHTML = ps.length ? `<table><tr><th>Kód</th><th>Klient</th><th>Fáze</th><th>Data</th><th>Úkolů</th><th>Útrata / měsíc</th></tr>` +
     ps.map(p=>`<tr><td class="mono">${esc(p.code)}</td><td>${esc(p.client_name||'')}</td>
+      <td><select class="sm" onchange="setPhase('${esc(p.code)}',this.value)"
+                  style="width:auto;padding:4px 8px;font-size:13px">
+        ${PHASES.map(f=>`<option ${p.phase===f?'selected':''}>${f}</option>`).join('')}
+      </select></td>
       <td><span class="tag ${p.data_class==='restricted'?'hot':''}">${esc(p.data_class)}</span></td>
       <td class="mono">${p.task_count}</td>
       <td class="mono">${czk(p.spent_czk)} / ${czk(p.budget_czk_month)}</td></tr>`).join('') + `</table>`
     : `<div class="empty">Založ první projekt.</div>`;
+}
+
+// Fáze rozhoduje o tom, kam smí agent zapisovat. Přepnutí platí pro
+// celý projekt a projeví se každé stanici při dalším spuštění.
+async function setPhase(code, kind){
+  try {
+    await api(`/v1/projects/${encodeURIComponent(code)}/phase`,
+              {method:'POST', body: JSON.stringify({kind})});
+    loadProjects();
+  } catch(e){ showErr('#projErr', e.message); loadProjects(); }
 }
 async function newProject(){
   try {
@@ -388,8 +408,13 @@ async function newProject(){
 // ── tým ──
 async function loadTeam(){
   const t = await api('/v1/team');
-  $('#joinCmd').textContent =
-    `curl -fsSL ${location.origin}/install-mac.sh | bash -s -- <JOIN-TOKEN>`;
+  // Registrační odkaz vyrábí Tailscale Funnel a instalátor ho ukládá do
+  // .env. Když tam není, Funnel se nezapnul — říct to natvrdo je lepší
+  // než nabízet příkaz, který nikam nevede.
+  if (!SET) { try { SET = await api('/v1/settings'); } catch(e) {} }
+  const join = (SET && SET.readonly && SET.readonly.JOIN_URL) || '';
+  $('#joinCmd').textContent = join ||
+    'Funnel neběží — registrační odkaz neexistuje. Na serveru: agenticdev-ctl funnel';
   $('#team').innerHTML = t.length ? `<table><tr><th>Člověk</th><th>Stroj</th><th>Kanál</th><th>Naposledy</th><th></th></tr>` +
     t.map(w=>`<tr>
       <td>${esc(w.display_name)}</td><td class="mono">${esc(w.hostname)}</td>

@@ -30,8 +30,13 @@
   body.lang-en .en{display:inline}
   body.lang-en div.en,body.lang-en p.en,body.lang-en ul.en,
   body.lang-en li.en,body.lang-en h1.en,body.lang-en h2.en,
-  body.lang-en h3.en,body.lang-en td.en,body.lang-en section.en{display:block}
+  body.lang-en h3.en,body.lang-en td.en,body.lang-en section.en,
+  body.lang-en pre.en{display:block}
   body.lang-en li.en{display:list-item}
+  /* Schéma je dvakrát celé, ne po částech: v jednom bloku by se zarovnání
+     rozsypalo, protože české a anglické popisky mají jinou délku. */
+  body:not(.lang-en) pre.en{display:none}
+  body.lang-en pre.cs{display:none}
 
   .wrap{max-width:var(--w); margin:0 auto; padding:0 24px}
 
@@ -177,6 +182,8 @@
     <a href="#"><img src="logo.svg" alt="AgenticDev"></a>
     <nav>
       <a href="#jak" class="hide"><span class="cs">Jak to funguje</span><span class="en">How it works</span></a>
+      <a href="#potreba" class="hide"><span class="cs">Co je potřeba</span><span class="en">Requirements</span></a>
+      <a href="#stav" class="hide"><span class="cs">Stav</span><span class="en">Status</span></a>
       <a href="#licence" class="hide"><span class="cs">Licence</span><span class="en">Licence</span></a>
       <a href="https://github.com/Praut-Startup-Support/AgenticDev">GitHub</a>
       <div class="lang">
@@ -188,8 +195,8 @@
 
 <div class="wrap hero">
   <div class="tag">
-    <span class="cs">Alfa — připravujeme vydání</span>
-    <span class="en">Alpha — preparing for release</span>
+    <span class="cs">Alfa — zdroják je veřejný, nasadit se dá dnes</span>
+    <span class="en">Alpha — source is public, you can deploy it today</span>
   </div>
   <h1>
     <span class="cs">O tom, co agent smí,<br>rozhoduje <span class="g">server</span>. Ne notebook.</span>
@@ -204,10 +211,18 @@
       lands in an auditable ledger.</span>
   </p>
   <div class="cta">
-    <a href="#zajem" class="btn p"><span class="cs">Chci vědět o vydání</span><span class="en">Notify me at launch</span></a>
+    <a href="https://github.com/Praut-Startup-Support/AgenticDev#install" class="btn p">
+      <span class="cs">Jak to nasadit</span><span class="en">How to deploy it</span></a>
     <a href="https://github.com/Praut-Startup-Support/AgenticDev" class="btn s">
       <span class="cs">Zdrojový kód</span><span class="en">Source code</span></a>
   </div>
+  <p class="small" style="margin-top:22px">
+    <span class="cs">Server na jeden příkaz, stroje týmu přes odkaz s heslem.
+      Co ještě nefunguje, <a href="#stav" style="color:var(--soft)">píšeme níž</a>.</span>
+    <span class="en">One command for the server, a password-protected link for your
+      team's machines. What does not work yet is
+      <a href="#stav" style="color:var(--soft)">further down</a>.</span>
+  </p>
 </div>
 
 <section id="proc">
@@ -239,18 +254,22 @@
       <div class="card">
         <span class="num">03</span>
         <h3><span class="cs">Stopa, která zůstane</span><span class="en">A trail that stays</span></h3>
-        <p><span class="cs">Rozhodnutí, běhy i útrata padají do databáze s řetězeným
-          hashem. Ne do něčí historie chatu.</span>
-          <span class="en">Decisions, runs, and spend land in a database with a hash
-          chain. Not in someone's chat history.</span></p>
+        <p><span class="cs">Rozhodnutí, běhy i útrata padají do Postgresu na tvém serveru,
+          ne do něčí historie chatu. Auditní stopa je navíc jen přírůstková a
+          řetězená hashem — přepsat záznam zpětně databáze odmítne.</span>
+          <span class="en">Decisions, runs, and spend land in Postgres on your own server,
+          not in someone's chat history. The audit trail on top of that is
+          append-only and hash-chained — the database refuses to rewrite a record.</span></p>
       </div>
       <div class="card">
         <span class="num">04</span>
-        <h3><span class="cs">Nikdo se to nedozví</span><span class="en">Nobody finds out</span></h3>
-        <p><span class="cs">Jedna firma, jeden server, žádná centrální služba. Že sis to
-          nainstaloval, se nedozvíme ani my.</span>
-          <span class="en">One company, one server, no central service. We never learn
-          that you installed it.</span></p>
+        <h3><span class="cs">Bez účtu u nás</span><span class="en">No account with us</span></h3>
+        <p><span class="cs">Jedna firma, jeden server, žádná centrální služba a žádná
+          telemetrie. Že sis to nainstaloval, se nedozvíme. Účet ale budeš
+          potřebovat u Tailscale — bez něj se platforma nedá bezpečně vystavit.</span>
+          <span class="en">One company, one server, no central service and no telemetry.
+          We never learn that you installed it. You will need a Tailscale account
+          though — without it the platform cannot be exposed safely.</span></p>
       </div>
     </div>
   </div>
@@ -263,22 +282,47 @@
       <span class="cs">Hranici drží jádro operačního systému, ne slušnost agenta.</span>
       <span class="en">The boundary is held by the kernel, not by the agent behaving.</span>
     </p>
-    <div class="box"><pre>
+    <div class="box"><pre class="cs">
    <b>egress</b> ──── allowlist ────► <i>internet</i>
       ▲
-      │  jediná cesta ven / the only way out
+      │  jediná cesta ven
       │
     <b>pod</b> ── bez routy ven · non-root · žádný docker socket
       │
-      ├── <b>/workspace</b>   repozitář read-only, scope cesty rw
-      ├── <b>/ctx</b>         kontext ze serveru, read-only
-      └── <b>/run/agenticdev</b>   token a policy na tmpfs, po skončení nic</pre>
+      ├── <b>/workspace</b>        repozitář read-only, scope cesty rw
+      ├── <b>/ctx</b>              kontext ze serveru, read-only
+      └── <b>/run/agenticdev</b>   token a policy na tmpfs, po skončení nic</pre><pre class="en">
+   <b>egress</b> ──── allowlist ────► <i>internet</i>
+      ▲
+      │  the only way out
+      │
+    <b>pod</b> ── no route out · non-root · no docker socket
+      │
+      ├── <b>/workspace</b>        repo read-only, scope paths rw
+      ├── <b>/ctx</b>              context from the server, read-only
+      └── <b>/run/agenticdev</b>   token and policy on tmpfs, gone on teardown</pre>
     </div>
     <p class="small" style="margin-top:20px">
       <span class="cs">Git po síti dělá hostitel — agent nikdy nedrží přihlašovací údaje
-        k repozitáři. Zápis mimo povolený rozsah skončí chybou souborového systému.</span>
+        k repozitáři. Zápis mimo povolený rozsah skončí chybou souborového systému.
+        Harness navíc odmítne pod spustit, když je kořen workspace zapisovatelný nebo
+        chybí proxy: špatně nastavená izolace má spadnout nahlas, ne tiše nechránit nic.</span>
       <span class="en">Network git operations stay on the host — the agent never holds
-        credentials to your repository. A write outside scope fails at the filesystem.</span>
+        credentials to your repository. A write outside scope fails at the filesystem.
+        The harness also refuses to start the pod if the workspace root turns out to be
+        writable or the proxy is missing: a misconfigured sandbox should fail loudly,
+        not quietly protect nothing.</span>
+    </p>
+    <p class="small" style="margin-top:14px">
+      <span class="cs">Z internetu je vidět jedna jediná cesta — registrační stránka,
+        publikovaná přes Tailscale Funnel. Panel, git ani API veřejný port nemají.
+        Heslo je na té stránce jediná zábrana, takže má omezený počet pokusů na
+        adresu i celkem a po pěti neúspěších adresu na hodinu zamkne.</span>
+      <span class="en">Exactly one path is reachable from the internet — the enrollment
+        page, published through Tailscale Funnel. The panel, git, and the API have no
+        public port. The password is the only gate on that page, so attempts are
+        limited per address and globally, and five failures lock an address out for
+        an hour.</span>
     </p>
   </div>
 </section>
@@ -303,10 +347,119 @@
       </div>
       <div class="card">
         <h3><span class="cs">Kdo nechce cizí SaaS</span><span class="en">No third-party SaaS</span></h3>
-        <p><span class="cs">Kód klientů zůstává na tvém serveru. Žádná registrace,
-          žádná telemetrie, žádný účet u nás.</span>
-          <span class="en">Client code stays on your server. No sign-up, no telemetry,
-          no account with us.</span></p>
+        <p><span class="cs">Kód klientů zůstává na tvém serveru a na strojích týmu.
+          U nás se neregistruješ a nic nám neposíláš. Ven jde jen to, co si
+          pustíš sám — model a domény, které vyjmenuješ.</span>
+          <span class="en">Client code stays on your server and your team's machines.
+          You never register with us and send us nothing. The only things that
+          leave are the ones you allow — your model and the domains you list.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="potreba">
+  <div class="wrap">
+    <h2><span class="cs">Co k tomu potřebuješ</span><span class="en">What you need</span></h2>
+    <p class="sub">
+      <span class="cs">Nic exotického, ale Tailscale není volitelný — platforma se
+        po veřejné síti nevystavuje.</span>
+      <span class="en">Nothing exotic, but Tailscale is not optional — the platform
+        does not expose itself on the public network.</span>
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="cs">Server</span><span class="en">Server</span></h3>
+        <p><span class="cs">VPS s Debianem 12 nebo Ubuntu 22.04/24.04, aspoň 4 GB RAM
+          a root. Docker, firewall, Postgres, git server i zálohy si nastaví
+          instalátor sám.</span>
+          <span class="en">A VPS running Debian 12 or Ubuntu 22.04/24.04, at least 4 GB
+          RAM, and root. Docker, the firewall, Postgres, the git server and backups
+          are set up by the installer.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Tailscale</span><span class="en">Tailscale</span></h3>
+        <p><span class="cs">Účet a zapnuté HTTPS certifikáty. Server ani databáze
+          nemají veřejný port — všechno kromě registrace jde po tailnetu.</span>
+          <span class="en">An account with HTTPS certificates enabled. Neither the server
+          nor the database has a public port — everything except enrollment goes
+          over the tailnet.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Stroje týmu</span><span class="en">Team machines</span></h3>
+        <p><span class="cs">macOS, Linux nebo Windows 10 (build 19041+) přes WSL2.
+          Na každém Docker — bez něj launcher agenta odmítne spustit, protože
+          by neběžel v izolaci.</span>
+          <span class="en">macOS, Linux, or Windows 10 (build 19041+) through WSL2.
+          Docker on each — without it the launcher refuses to start the agent,
+          because it would not be running in isolation.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Model</span><span class="en">A model</span></h3>
+        <p><span class="cs">Klíč k OpenAI-kompatibilnímu API nebo Anthropicu, anebo
+          lokální Ollama. U projektů s citlivými daty se cloud tvrdě zakáže a
+          lokální model je pak povinný.</span>
+          <span class="en">A key for an OpenAI-compatible API or Anthropic, or a local
+          Ollama. For projects marked sensitive the cloud is hard-blocked, which
+          makes a local model mandatory.</span></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="stav">
+  <div class="wrap">
+    <h2><span class="cs">Co ještě nefunguje</span><span class="en">What does not work yet</span></h2>
+    <p class="sub">
+      <span class="cs">Je to alfa. Tohle nejsou překvapení, na která přijdeš týden po
+        nasazení — jsou to díry, o kterých víme.</span>
+      <span class="en">This is alpha. These are not surprises you find a week in —
+        they are holes we know about.</span>
+    </p>
+    <div class="grid">
+      <div class="card">
+        <h3><span class="cs">Testy si pouští agent sám</span><span class="en">The agent runs its own tests</span></h3>
+        <p><span class="cs">Mezi prací agenta a mergem není serverová brána. Pro malý
+          tým, který si věří, to stačí; jako záruka kvality ne.</span>
+          <span class="en">There is no server-side gate between the agent's work and a
+          merge. Fine for a small team that trusts itself; not a quality guarantee.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Agent pracuje bez stavového automatu</span><span class="en">No orchestration layer</span></h3>
+        <p><span class="cs">Orchestrační vrstva, která by řídila fáze úkolu, popsaná je,
+          ale v kódu není. Server rozdává práci a kontext, ne postup.</span>
+          <span class="en">The layer that would drive a task through its stages is
+          described but not implemented. The server hands out work and context,
+          not a procedure.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Útrata je orientační</span><span class="en">Cost figures are indicative</span></h3>
+        <p><span class="cs">Tokeny se odhadují, ceny modelů nejsou ověřené. Číslo v
+          panelu ber jako ukazatel trendu, ne jako fakturu.</span>
+          <span class="en">Tokens are estimated and model prices are unverified. Treat
+          the number in the panel as a trend, not an invoice.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Kontejner není hypervizor</span><span class="en">A container is not a hypervisor</span></h3>
+        <p><span class="cs">Pod běží bez rootu, bez capabilit a bez docker socketu, ale
+          útěk z kontejneru neřešíme. Je to pevný plot, ne trezor.</span>
+          <span class="en">The pod runs non-root, with no capabilities and no Docker
+          socket, but container escape is out of scope. A strong fence, not a vault.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Heslo pro připojení nemá expiraci</span><span class="en">The join password never expires</span></h3>
+        <p><span class="cs">Je jedno pro celou instanci. Odvolat ho znamená změnit ho
+          všem — jednotlivý stroj ale odebereš z panelu kdykoli.</span>
+          <span class="en">It is one password for the whole instance. Revoking it means
+          changing it for everyone — though you can drop any single machine from
+          the panel at any time.</span></p>
+      </div>
+      <div class="card">
+        <h3><span class="cs">Chybí observabilita</span><span class="en">No observability stack</span></h3>
+        <p><span class="cs">Grafana a Loki jsou v compose zakomentované. Zatím platí
+          logy z Dockeru a auditní stopa v databázi.</span>
+          <span class="en">Grafana and Loki are commented out in the compose file. For
+          now it is Docker logs and the audit trail in the database.</span></p>
       </div>
     </div>
   </div>
@@ -329,7 +482,7 @@
         <ul>
           <li><span class="cs">Neomezeně strojů a projektů</span><span class="en">Unlimited machines and projects</span></li>
           <li><span class="cs">Celý zdrojový kód</span><span class="en">Full source code</span></li>
-          <li><span class="cs">Vyzkoušení a vývoj vždy zdarma</span><span class="en">Evaluation and dev always free</span></li>
+          <li><span class="cs">Vyzkoušení, vývoj a učení vždy zdarma, bez ohledu na obrat</span><span class="en">Evaluation, dev and teaching always free, whatever your revenue</span></li>
         </ul>
       </div>
       <div class="card">
@@ -345,8 +498,12 @@
     </div>
     <p class="small" style="margin-top:22px">
       <span class="cs">Business Source License 1.1. Není to open source podle definice OSI —
-        je to source-available. <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/LICENSE-FAQ.md" style="color:var(--soft)">Rozdíl vysvětlujeme tady</a>.</span>
+        je to source-available. Jedno omezení platí i pro malé firmy: nabízet
+        AgenticDev třetím stranám jako hostovanou službu licence nedovoluje.
+        <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/LICENSE-FAQ.md" style="color:var(--soft)">Rozdíl vysvětlujeme tady</a>.</span>
       <span class="en">Business Source License 1.1. Not OSI open source — source-available.
+        One limit applies regardless of size: the licence does not allow offering
+        AgenticDev to third parties as a hosted or managed service.
         <a href="https://github.com/Praut-Startup-Support/AgenticDev/blob/main/LICENSE-FAQ.md" style="color:var(--soft)">We explain the difference here</a>.</span>
     </p>
   </div>
@@ -355,10 +512,13 @@
 <section id="zajem">
   <div class="wrap">
     <div class="signup">
-      <h2><span class="cs">Dáme vědět, až to bude hotové</span><span class="en">We will tell you when it is ready</span></h2>
+      <h2><span class="cs">Dáme vědět, až vyjde stabilní verze</span><span class="en">We will tell you when a stable release lands</span></h2>
       <p class="sub" style="margin:0 auto; text-align:center">
-        <span class="cs">Jeden e-mail, až vyjde první verze. Nic dalšího posílat nebudeme.</span>
-        <span class="en">One email when the first release lands. Nothing else.</span>
+        <span class="cs">Zkusit to můžeš hned — zdroják je na GitHubu. Tohle je pro
+          případ, že chceš počkat, až díry výš zmizí. Jeden e-mail, nic dalšího.</span>
+        <span class="en">You can try it right now — the source is on GitHub. This is for
+          when you would rather wait until the holes above are gone. One email,
+          nothing else.</span>
       </p>
 
       <form id="f" action="https://formspree.io/f/xbgroknv" method="POST">
@@ -371,11 +531,11 @@
           <input type="checkbox" name="souhlas" required>
           <span>
             <span class="cs">Souhlasím, aby Praut s.r.o. použil moji adresu k jedinému
-              účelu — oznámit vydání AgenticDev. Souhlas můžu kdykoli odvolat na
-              svanda@praut.cz a adresa bude smazána.</span>
+              účelu — oznámit vydání stabilní verze AgenticDev. Souhlas můžu kdykoli
+              odvolat na svanda@praut.cz a adresa bude smazána.</span>
             <span class="en">I agree that Praut s.r.o. may use my address for one purpose —
-              to announce the AgenticDev release. I can withdraw consent any time at
-              svanda@praut.cz and the address will be deleted.</span>
+              to announce the stable AgenticDev release. I can withdraw consent any
+              time at svanda@praut.cz and the address will be deleted.</span>
           </span>
         </label>
         <div class="msg" id="m"></div>

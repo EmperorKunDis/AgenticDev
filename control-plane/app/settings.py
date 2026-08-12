@@ -95,23 +95,6 @@ _TTL = 5.0
 _lock = threading.Lock()
 
 
-def ensure_table() -> None:
-    """
-    Tabulka se zakládá tady, ne jen v SQL souboru. Init skripty Postgresu
-    běží pouze při prvním startu prázdné databáze — u existující instalace
-    by se nikdy nespustily.
-    """
-    with db() as c:
-        c.execute("""
-            CREATE TABLE IF NOT EXISTS setting (
-                key        TEXT PRIMARY KEY,
-                value      TEXT NOT NULL,
-                updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-                updated_by TEXT
-            )
-        """)
-
-
 def _load() -> dict[str, str]:
     global _cache, _cache_at
     with _lock:

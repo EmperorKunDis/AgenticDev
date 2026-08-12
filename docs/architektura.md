@@ -308,7 +308,7 @@ Tohle je centrální artefakt celého systému. Kontejner na stanici si o něj �
 
   // vynucuje HARNESS, ne director — director tyhle hodnoty nemůže přepsat
   "policy": {
-    "model_allowlist": ["claude-sonnet-4-6", "local/qwen2.5-coder:32b"],
+    "model_allowlist": ["claude-sonnet-5", "local/qwen2.5-coder:32b"],
     "egress_allowlist": ["api.anthropic.com", "registry.npmjs.org", "vps.tailnet"],
     "human_gate": ["schema_migration", "dependency_add", "prod_deploy"],
     "max_wall_clock_min": 240,

@@ -4,15 +4,16 @@ Zakládání projektů, úkolů, registrace stanic, schvalování rozhodnutí.
 """
 from __future__ import annotations
 
-import json, os, re, secrets
+import json, os, re, secrets, time
 from datetime import datetime, timedelta, timezone
 
 import httpx
 import jwt
-from fastapi import APIRouter, Cookie, Depends, HTTPException, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
 from .main import DEF_MODEL, JWT_SECRET, _emit, db, now
+from . import ratelimit
 from . import settings as cfg
 
 router = APIRouter()
@@ -34,17 +35,36 @@ class Login(BaseModel):
     token: str
 
 
+# Panel stojí na jednom sdíleném heslu, takže potřebuje stejnou ochranu
+# jako registrace. Tailnet není důvod ji vynechat — stačí jeden napadený
+# stroj v síti a heslo se dá zkoušet, jak dlouho kdo chce.
+_login_limiter = ratelimit.Limiter(window=900, per_ip=10, global_cap=100, lockout=1800)
+
+
 @router.post("/v1/auth/dashboard")
-def dashboard_login(body: Login, response: Response):
+def dashboard_login(body: Login, request: Request, response: Response):
+    ip = ratelimit.client_ip(request)
+    _login_limiter.check(ip)
+
     # Přes nastavení, ať změna hesla platí hned a ne až po restartu.
     pw = cfg.get("DASHBOARD_TOKEN", DASHBOARD_TOKEN)
     if not pw or not secrets.compare_digest(body.token, pw):
+        _login_limiter.record(ip)
+        time.sleep(0.5)
         raise HTTPException(401, "špatné heslo")
+
+    _login_limiter.clear(ip)
     tok = jwt.encode(
         {"role": "operator", "exp": now() + timedelta(days=30)},
         JWT_SECRET, algorithm="HS256")
+    # Secure podle toho, jak PŘIŠEL TENHLE požadavek, ne podle nastavení
+    # instance: k panelu se chodí přes doménu (https) i napřímo po
+    # tailnetu (http://<ip>:8080). Kdyby se to řídilo konfigurací, jeden
+    # z těch dvou způsobů by cookie neuložil a přihlášení by tiše selhalo.
+    https = (request.headers.get("x-forwarded-proto", "").split(",")[0].strip()
+             or request.url.scheme) == "https"
     response.set_cookie("agenticdev_session", tok, httponly=True,
-                        samesite="lax", max_age=30 * 24 * 3600)
+                        samesite="lax", max_age=30 * 24 * 3600, secure=https)
     return {"ok": True}
 
 
@@ -80,13 +100,35 @@ def register_ws(b: Register):
                 """INSERT INTO principal (kind, display_name, email)
                    VALUES ('human', %s, %s) RETURNING *""",
                 (b.display_name, b.email)).fetchone()
-        ws = c.execute(
-            """INSERT INTO workstation (principal_id, hostname, device_key_fp, channel)
-               VALUES (%s, %s, %s, 'stable')
-               ON CONFLICT (device_key_fp) DO UPDATE
-                 SET hostname = EXCLUDED.hostname, revoked_at = NULL
-               RETURNING *""",
-            (p["id"], b.hostname, b.device_key_fp)).fetchone()
+        # Na workstation jsou dva unikátní klíče, takže se dá narazit dvěma
+        # způsoby, a ON CONFLICT umí cílit jen na jeden. Hostname je ten
+        # druhý a musí se řešit ručně, jinak přeinstalovaný stroj (stejné
+        # jméno, NOVÝ device key) spadne na 500.
+        prev = c.execute("SELECT * FROM workstation WHERE hostname = %s",
+                         (b.hostname,)).fetchone()
+        if prev and prev["principal_id"] != p["id"]:
+            # Jména strojů unikátní nejsou — dva lidé mají klidně oba
+            # "MacBook-Pro". Přepsat cizí řádek by tomu druhému tiše vzalo
+            # přístup, takže radši řekneme, co se děje.
+            raise HTTPException(
+                409,
+                f"stroj se jménem '{b.hostname}' už je registrovaný na někoho jiného. "
+                f"Přejmenuj si ho a pusť instalaci znovu.")
+        if prev:
+            ws = c.execute(
+                """UPDATE workstation
+                      SET device_key_fp = %s, revoked_at = NULL
+                    WHERE id = %s
+                  RETURNING *""",
+                (b.device_key_fp, prev["id"])).fetchone()
+        else:
+            ws = c.execute(
+                """INSERT INTO workstation (principal_id, hostname, device_key_fp, channel)
+                   VALUES (%s, %s, %s, 'stable')
+                   ON CONFLICT (device_key_fp) DO UPDATE
+                     SET hostname = EXCLUDED.hostname, revoked_at = NULL
+                   RETURNING *""",
+                (p["id"], b.hostname, b.device_key_fp)).fetchone()
         _emit(c, p["id"], "workstation", str(ws["id"]), "registered",
               {"hostname": b.hostname}, b.device_key_fp)
 
@@ -238,6 +280,7 @@ def list_projects(op: dict = Depends(operator)):
     with db() as c:
         return c.execute(
             """SELECT p.*, cl.name AS client_name,
+                      (SELECT kind FROM phase WHERE project_id = p.id AND active LIMIT 1) AS phase,
                       (SELECT count(*) FROM task t JOIN phase ph ON ph.id=t.phase_id
                         WHERE ph.project_id = p.id) AS task_count,
                       (SELECT COALESCE(SUM(ar.cost_czk),0) FROM agent_run ar
@@ -448,10 +491,13 @@ def settings_set(body: SettingsPatch, op: dict = Depends(operator)):
     changed = cfg.set_many(body.values, by=op.get("role", "panel"))
 
     # Do ledgeru jde jen seznam klíčů, nikdy hodnoty — jsou mezi nimi hesla.
+    # dedupe_key musí být neprázdný (NOT NULL) a pro každou změnu jiný,
+    # jinak by unikátní index spolkl druhou úpravu téhož klíče.
     if changed:
         with db() as c:
             _emit(c, None, "platform", "settings", "updated",
-                  {"keys": sorted(changed)}, None)
+                  {"keys": sorted(changed)},
+                  f"settings:{now().isoformat()}")
 
     warn = None
     if "DASHBOARD_TOKEN" in changed:
