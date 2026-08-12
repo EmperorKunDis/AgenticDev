@@ -1,28 +1,27 @@
 # ═══════════════════════════════════════════════════════════════
 #  AGENTICDEV — připojení Windows
 #
-#      powershell -ExecutionPolicy Bypass -File agenticdev-install.ps1 -Token <HESLO>
+#      powershell -ExecutionPolicy Bypass -File agenticdev-install.ps1
 #
-#  AgenticDev potřebuje Docker a linuxový shell, takže na Windows běží ve
-#  WSL2. Tenhle skript připraví Windows část (WSL, Tailscale, ikona)
-#  a zbytek předá linuxovému instalátoru uvnitř WSL.
+#  Pody běží na VPS (ADR-0005), takže tady se nic těžkého neinstaluje:
+#  Tailscale, jeden konfigurační soubor a zástupce na plochu.
+#  WSL2 už není potřeba — Docker ani agent na tomhle stroji neběží.
 #
 #  Idempotentní. Můžeš pustit znovu.
 # ═══════════════════════════════════════════════════════════════
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [Parameter(Mandatory = $true)][string]$Token,
     [string]$ControlPlane = "__CONTROL_PLANE__",
-    [string]$Distro = "Ubuntu"
+    [string]$Login = ""
 )
 
 $ErrorActionPreference = "Stop"
 
 function Step($m) { Write-Host "`n> $m" -ForegroundColor Cyan }
-function OK($m)   { Write-Host "  ✓ $m" -ForegroundColor Green }
+function OK($m)   { Write-Host "  * $m" -ForegroundColor Green }
 function Warn($m) { Write-Host "  ! $m" -ForegroundColor Yellow }
-function Die($m)  { Write-Host "`n✗ $m" -ForegroundColor Red; exit 1 }
+function Die($m)  { Write-Host "`nx $m" -ForegroundColor Red; exit 1 }
 
 Clear-Host
 @"
@@ -32,144 +31,106 @@ Clear-Host
   └────────────────────────────────┘
 "@ | Write-Host
 
-# ═══ 0. Předpoklady ════════════════════════════════════════════
-$admin = ([Security.Principal.WindowsPrincipal] `
-          [Security.Principal.WindowsIdentity]::GetCurrent()
-         ).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
-if (-not $admin) {
-    Die "Spusť PowerShell jako správce. WSL a Tailscale se jinak nenainstalují."
-}
-
-$build = [int](Get-CimInstance Win32_OperatingSystem).BuildNumber
-if ($build -lt 19041) {
-    Die "Potřebuju Windows 10 verze 2004 (build 19041) nebo novější. Máš build $build."
-}
-
-# ═══ 1. WSL2 ═══════════════════════════════════════════════════
-Step "WSL2"
-$wslOk = $false
-try { wsl.exe --status *>$null; $wslOk = ($LASTEXITCODE -eq 0) } catch { $wslOk = $false }
-
-if (-not $wslOk) {
-    Warn "instaluji WSL — po dokončení bude potřeba restart"
-    wsl.exe --install --no-launch
-    if ($LASTEXITCODE -ne 0) { Die "WSL se nenainstalovalo." }
-    Write-Host ""
-    Write-Host "  Restartuj Windows a pusť tenhle skript znovu." -ForegroundColor Yellow
-    exit 0
-}
-wsl.exe --set-default-version 2 *>$null
-OK "wsl"
-
-# ═══ 2. Distribuce ═════════════════════════════════════════════
-Step "Linux uvnitř Windows"
-# wsl --list vrací UTF-16 s nulovými bajty, jinak by porovnání selhalo
-$installed = (wsl.exe --list --quiet) -replace "`0", "" -split "`r?`n" |
-             Where-Object { $_.Trim() -ne "" } | ForEach-Object { $_.Trim() }
-
-if ($installed -notcontains $Distro) {
-    Warn "instaluji $Distro (chvíli to trvá)"
-    wsl.exe --install -d $Distro --no-launch
-    if ($LASTEXITCODE -ne 0) { Die "$Distro se nenainstalovala." }
-    Write-Host ""
-    Write-Host "  Otevři '$Distro' z nabídky Start, vytvoř si uživatele," -ForegroundColor Yellow
-    Write-Host "  zavři okno a pusť tenhle skript znovu." -ForegroundColor Yellow
-    exit 0
-}
-
-# Bez uživatele se do distribuce nedá nic nainstalovat
-$whoami = (wsl.exe -d $Distro -- whoami 2>$null) -replace "`0", ""
-if (-not $whoami -or $whoami.Trim() -eq "root") {
-    Warn "v $Distro ještě není běžný uživatel"
-    Write-Host "  Otevři '$Distro' z nabídky Start, vytvoř si uživatele a pusť mě znovu."
-    exit 0
-}
-OK "$Distro (uživatel $($whoami.Trim()))"
-
-# ═══ 3. Tailscale ══════════════════════════════════════════════
-# Na Windows se instaluje nativně — WSL sdílí síť s hostitelem.
-Step "Síť"
+# ═══ 1. Tailscale ══════════════════════════════════════════════
+# Jediná síť, po které je VPS vidět.
+Step "Tailscale"
 $ts = Get-Command tailscale.exe -ErrorAction SilentlyContinue
-if (-not $ts -and -not (Test-Path "$env:ProgramFiles\Tailscale\tailscale.exe")) {
+if (-not $ts) {
+    $known = "$env:ProgramFiles\Tailscale\tailscale.exe"
+    if (Test-Path $known) { $ts = @{ Source = $known } }
+}
+if (-not $ts) {
     Warn "instaluji Tailscale"
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id tailscale.tailscale --silent --accept-package-agreements `
-                       --accept-source-agreements *>$null
+        winget install --id tailscale.tailscale --accept-source-agreements --accept-package-agreements
     } else {
-        Warn "winget není k dispozici — nainstaluj Tailscale ručně:"
-        Write-Host "     https://tailscale.com/download/windows"
-        Read-Host "  Až budeš hotový, zmáčkni Enter"
+        Die "Nemám winget. Nainstaluj Tailscale z https://tailscale.com/download/windows a pusť to znovu."
     }
+    $known = "$env:ProgramFiles\Tailscale\tailscale.exe"
+    if (Test-Path $known) { $ts = @{ Source = $known } } else { Die "Tailscale se nenainstaloval." }
 }
-$tsExe = (Get-Command tailscale.exe -ErrorAction SilentlyContinue).Source
-if (-not $tsExe) { $tsExe = "$env:ProgramFiles\Tailscale\tailscale.exe" }
-
-$connected = $false
-if (Test-Path $tsExe) {
-    & $tsExe status *>$null
-    $connected = ($LASTEXITCODE -eq 0)
-}
-if (-not $connected) {
-    Write-Host ""
-    Write-Host "  Přihlas se do Tailscale klíčem z registrační stránky:" -ForegroundColor Yellow
-    Write-Host "     tailscale up --authkey ..."
-    Read-Host "  Až budeš připojený, zmáčkni Enter"
-}
+$tsExe = $ts.Source
 OK "tailscale"
 
-# ═══ 4. Instalace uvnitř WSL ═══════════════════════════════════
-Step "AgenticDev"
-# Uvnitř WSL běží Linux, takže si musíme vyžádat LINUXOVÝ instalátor.
-# Bez "os":"linux" vydá server ten pro macOS a ten se v WSL odmítne
-# spustit ("Tenhle instalátor je pro macOS").
-$inner = @"
-set -e
-curl -fsS -X POST '$ControlPlane/join/installer' \
-  -H 'content-type: application/json' \
-  -d '{"password":"$Token","os":"linux"}' -o /tmp/agenticdev-install.sh
-bash /tmp/agenticdev-install.sh '$Token'
-rm -f /tmp/agenticdev-install.sh
-"@ -replace "`r", ""
+& $tsExe status *>$null
+if ($LASTEXITCODE -ne 0) {
+    Write-Host ""
+    Write-Host "  Přihlas se do stejné sítě jako VPS. Klíč máš z registrační stránky:" -ForegroundColor Yellow
+    Write-Host "     tailscale up --authkey tskey-..."
+    Write-Host ""
+    Read-Host "  Až budeš připojený, zmáčkni Enter"
+}
 
-$tmp = [IO.Path]::GetTempFileName()
-[IO.File]::WriteAllText($tmp, $inner, [Text.UTF8Encoding]::new($false))
-$wslPath = (wsl.exe -d $Distro -- wslpath -a "'$($tmp -replace '\\','\\')'") -replace "`0", ""
+# ═══ 2. Kam se připojovat ══════════════════════════════════════
+Step "Kde je VPS"
+$vps = $ControlPlane -replace '^https?://', '' -replace '[:/].*$', ''
+if (-not $vps -or $vps -eq "__CONTROL_PLANE__") {
+    Die "Instalátor neví, kde je VPS. Vyžádej si nový z registrační stránky."
+}
+OK $vps
 
-wsl.exe -d $Distro -- bash $wslPath.Trim()
-$rc = $LASTEXITCODE
-Remove-Item $tmp -Force -ErrorAction SilentlyContinue
-if ($rc -ne 0) { Die "Instalace uvnitř WSL selhala." }
-OK "nainstalováno"
+# Login na VPS zakládá správce příkazem `agenticdev-ctl user add`, takže
+# ho tenhle stroj nemá odkud zjistit — musí ho říct člověk.
+if (-not $Login) {
+    Write-Host ""
+    Write-Host "  Tvoje přihlašovací jméno na VPS (dal ti ho správce):"
+    $Login = Read-Host "  login"
+}
+if (-not $Login) { Die "Bez loginu se nepřihlásím." }
 
-# ═══ 5. Ikona na plochu ════════════════════════════════════════
-Step "Ikona"
+$cfgDir = Join-Path $env:USERPROFILE ".agenticdev"
+New-Item -ItemType Directory -Force -Path $cfgDir *>$null
+@"
+AGENTICDEV_VPS=$vps
+AGENTICDEV_LOGIN=$Login
+"@ | Set-Content -Path (Join-Path $cfgDir "vps") -Encoding UTF8
+OK "uloženo do $cfgDir\vps"
+
+# ═══ 3. Zástupce na plochu ═════════════════════════════════════
+Step "Zástupce"
 $dir = Join-Path $env:LOCALAPPDATA "AgenticDev"
 New-Item -ItemType Directory -Force -Path $dir *>$null
 
+# Ikonu si stáhneme z VPS; když to nejde, zástupce bude se systémovou.
 $ico = Join-Path $dir "agenticdev.ico"
 try {
-    Invoke-WebRequest -Uri "$ControlPlane/brand/agenticdev.ico" -OutFile $ico -UseBasicParsing
-} catch {
-    Warn "ikonu se nepodařilo stáhnout, zástupce bude s výchozí"
-}
+    Invoke-WebRequest -Uri "$ControlPlane/brand/agenticdev.ico" -OutFile $ico -TimeoutSec 15
+} catch { Warn "ikonu se nepodařilo stáhnout" }
 
+$cmdFile = Join-Path $dir "agenticdev.cmd"
+@"
+@echo off
+title AgenticDev
+"$tsExe" ssh $Login@$vps agenticdev work
+if errorlevel 1 pause
+"@ | Set-Content -Path $cmdFile -Encoding ASCII
+
+$desktop = [Environment]::GetFolderPath("Desktop")
+$lnk = Join-Path $desktop "AgenticDev.lnk"
 $shell = New-Object -ComObject WScript.Shell
-foreach ($base in @([Environment]::GetFolderPath("Desktop"),
-                    (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs"))) {
-    if (-not (Test-Path $base)) { continue }
-    $lnk = $shell.CreateShortcut((Join-Path $base "AgenticDev.lnk"))
-    $lnk.TargetPath       = "$env:SystemRoot\System32\wsl.exe"
-    $lnk.Arguments        = "-d $Distro -- bash -lic 'agenticdev work'"
-    $lnk.Description      = "Otevře agenta a výběr projektu"
-    $lnk.WorkingDirectory = $env:USERPROFILE
-    if (Test-Path $ico) { $lnk.IconLocation = $ico }
-    $lnk.Save()
+$sc = $shell.CreateShortcut($lnk)
+$sc.TargetPath = $cmdFile
+$sc.WorkingDirectory = $dir
+$sc.Description = "Otevře agenta a výběr projektu"
+if (Test-Path $ico) { $sc.IconLocation = $ico }
+$sc.Save()
+OK "AgenticDev na ploše"
+
+# ═══ 4. Zkouška ════════════════════════════════════════════════
+Step "Zkouška"
+try {
+    Invoke-WebRequest -Uri "$ControlPlane/v1/health" -TimeoutSec 8 -UseBasicParsing *>$null
+    OK "VPS odpovídá"
+} catch {
+    Warn "VPS neodpovídá — zkontroluj: tailscale status"
 }
-OK "AgenticDev na ploše i v nabídce Start"
 
 Write-Host ""
 Write-Host "  Hotovo." -ForegroundColor Green
 Write-Host ""
-Write-Host "  Klikni na ikonu AgenticDev na ploše, nebo spusť ve WSL:"
-Write-Host "      agenticdev work"
+Write-Host "  Klikni na ikonu AgenticDev, nebo z příkazové řádky:"
+Write-Host "      tailscale ssh $Login@$vps" -ForegroundColor Yellow
+Write-Host "      agenticdev" -ForegroundColor Yellow
+Write-Host ""
+Write-Host "  Poprvé se v Pi přihlas k modelu přes /login. Pak už to platí." -ForegroundColor DarkGray
 Write-Host ""

@@ -1,17 +1,30 @@
 #!/usr/bin/env bash
-# Spouštěč. Otevře Ghostty (nebo náhradu) a spustí v něm agenticdev work.
+# Spouštěč. Agent běží na VPS (ADR-0005), takže tohle otevře Ghostty
+# (nebo náhradu) a spustí v něm Tailscale SSH na server.
 set -euo pipefail
 
-AGENTICDEV=""
-for c in /usr/local/bin/agenticdev "$HOME/bin/agenticdev" /opt/homebrew/bin/agenticdev; do
-  [[ -x "$c" ]] && { AGENTICDEV="$c"; break; }
-done
-if [[ -z "$AGENTICDEV" ]]; then
-  osascript -e 'display alert "AgenticDev není nainstalovaný" message "Pusť instalační příkaz, který ti poslal správce." as critical'
-  exit 1
-fi
+CFG="$HOME/.agenticdev/vps"
 
-CMD="$AGENTICDEV work"
+alert() {
+  osascript -e "display alert \"AgenticDev\" message \"$1\" as critical" >/dev/null
+  exit 1
+}
+
+[[ -f "$CFG" ]] || alert "Tenhle Mac není připojený. Pusť instalaci, kterou ti poslal správce."
+# shellcheck disable=SC1090
+. "$CFG"
+[[ -n "${AGENTICDEV_VPS:-}" && -n "${AGENTICDEV_LOGIN:-}" ]] \
+  || alert "Konfigurace je poškozená. Pusť instalaci znovu."
+
+TS=""
+for c in /usr/local/bin/tailscale /opt/homebrew/bin/tailscale \
+         /Applications/Tailscale.app/Contents/MacOS/Tailscale; do
+  [[ -x "$c" ]] && { TS="$c"; break; }
+done
+[[ -n "$TS" ]] || alert "Tailscale není nainstalovaný."
+"$TS" status >/dev/null 2>&1 || alert "Nejsi v tailnetu. Otevři Tailscale a přihlas se."
+
+CMD="$TS ssh ${AGENTICDEV_LOGIN}@${AGENTICDEV_VPS} agenticdev work"
 
 if [[ -d /Applications/Ghostty.app ]]; then
   open -na Ghostty --args --class=cz.agenticdev --title="AgenticDev" -e "$CMD"

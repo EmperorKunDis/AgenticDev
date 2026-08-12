@@ -127,8 +127,17 @@ code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -X POST "$API/join/
 [[ "$code" == "401" ]] && ok "špatné heslo odmítnuto (401)" || bad "špatné heslo vrátilo $code, čekal jsem 401"
 
 if [[ -n "${ENROLL_PASSWORD:-}" ]]; then
+  # Správné heslo bez identity musí projít neúspěchem: bez jména a e-mailu
+  # by v evidenci skončilo prázdno a agent by neměl čím commitovat.
+  code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -X POST "$API/join/api" \
+         -H 'content-type: application/json' \
+         -d "$(printf '{"password":"%s"}' "$ENROLL_PASSWORD")" 2>/dev/null)
+  [[ "$code" == "400" ]] && ok "registrace bez jména a e-mailu odmítnuta (400)" \
+    || bad "registrace bez identity vrátila $code, čekal jsem 400"
+
   JOINED=$(curl -sS --max-time 10 -X POST "$API/join/api" -H 'content-type: application/json' \
-           -d "$(printf '{"password":"%s"}' "$ENROLL_PASSWORD")" 2>/dev/null)
+           -d "$(printf '{"password":"%s","first_name":"Smoke","last_name":"Test","email":"smoke@example.com"}' \
+                 "$ENROLL_PASSWORD")" 2>/dev/null)
   if printf '%s' "$JOINED" | grep -q '"ok":true'; then
     ok "správné heslo projde"
     printf '%s' "$JOINED" | grep -q '"have_installer":true' \
@@ -243,11 +252,46 @@ print(p[0]['code'] if p else '')" 2>/dev/null)
         bad "fáze $ph nevrátila scope: $(printf '%s' "$BUNDLE" | head -c 100)"
       fi
     done
+
+    # Bez jména a e-mailu spadne agentovi v podu každý commit na
+    # "Author identity unknown" — v podu žádný ~/.gitconfig není.
+    AUTHOR=$(printf '%s' "$BUNDLE" | python3 -c "
+import json,sys
+a=json.load(sys.stdin).get('author') or {}
+print(f\"{a.get('name','')}|{a.get('email','')}\")" 2>/dev/null)
+    if [[ "$AUTHOR" == *"|"* && "${AUTHOR%%|*}" != "" && "${AUTHOR##*|}" != "" ]]; then
+      ok "bundle nese podpis commitů (${AUTHOR%%|*} <${AUTHOR##*|}>)"
+    else
+      bad "bundle nenese autora — agent nebude mít čím commitovat"
+    fi
   else
     warn "žádný projekt — workspace nezkusím"
   fi
 else
   warn "bez tokenu stanice workspace nezkusím"
+fi
+
+# ═══ 8b. Pody se pouští na VPS ═════════════════════════════════
+hdr "Launcher na VPS"
+command -v agenticdev >/dev/null \
+  && ok "agenticdev je v PATH" \
+  || bad "agenticdev není nainstalovaný — pody se pouštějí na VPS (ADR-0005)"
+
+# Bez skupiny docker člověk pod nespustí. Kontrolujeme účty, které mají
+# konfiguraci od `agenticdev-ctl user add`.
+PEOPLE=0; NODOCKER=""
+for h in /home/*; do
+  [[ -f "$h/.agenticdev/config" ]] || continue
+  PEOPLE=$((PEOPLE+1))
+  u=$(basename "$h")
+  id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -qx docker || NODOCKER="$NODOCKER $u"
+done
+if (( PEOPLE == 0 )); then
+  warn "na VPS nemá účet nikdo — 'agenticdev-ctl user add <login>'"
+elif [[ -z "$NODOCKER" ]]; then
+  ok "$PEOPLE lidí má účet i skupinu docker"
+else
+  bad "bez skupiny docker (pod nespustí):$NODOCKER"
 fi
 
 # ═══ 9. Úklid ══════════════════════════════════════════════════

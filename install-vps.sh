@@ -615,6 +615,10 @@ fi
 # ═══════════════════════════════════════════════════════════════════════
 step "Nástroje"
 install -m 0755 "$SRC/vps/agenticdev-ctl" /usr/local/bin/agenticdev-ctl
+# Launcher patří na VPS, protože tam běží pody (ADR-0005). Lidé ho pouštějí
+# po přihlášení přes Tailscale SSH.
+install -m 0755 "$SRC/launcher/agenticdev" /usr/local/bin/agenticdev
+ln -sfn /usr/local/bin/agenticdev /usr/local/bin/adev
 cat >/usr/local/bin/agenticdev-info <<'INFOEOF'
 #!/usr/bin/env bash
 set -a; . /srv/agenticdev/config/.env; set +a
@@ -633,7 +637,7 @@ printf "\n  ${B}INSTANCE${O}   %s\n" "$AGENTICDEV_INSTANCE_ID"
 printf "  ${D}agenticdev-ctl status | logs | mac | backup-now${O}\n\n"
 INFOEOF
 chmod +x /usr/local/bin/agenticdev-info
-ok "agenticdev-ctl, agenticdev-info"
+ok "agenticdev-ctl, agenticdev-info, agenticdev (adev)"
 
 # ═══════════════════════════════════════════════════════════════════════
 #  10. Druhý instalátor — svázaný s touhle instancí

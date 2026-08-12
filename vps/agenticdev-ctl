@@ -46,6 +46,106 @@ case "${1:-status}" in
     printf "  a tam spusť:\n    ${Y}bash ~/Downloads/agenticdev-install-mac.sh${O}\n\n"
     ;;
 
+  user)
+    # Pody běží na VPS (ADR-0005), takže každý člověk potřebuje na serveru
+    # vlastní účet: vlastní ~/.pi/agent s přihlášením k modelu a vlastní
+    # sessions. Privilegovanou část dělá root tady, jednou na člověka.
+    [[ $EUID -eq 0 ]] || die "tohle musí root: sudo agenticdev-ctl user $*"
+    case "${2:-}" in
+      add)
+        LOGIN="${3:-}"
+        [[ -n "$LOGIN" ]] || die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail]"
+        [[ "$LOGIN" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] || die "login smí být jen malá písmena, číslice, - a _"
+        FULL="${4:-$LOGIN}"
+        MAIL="${5:-$LOGIN@$(hostname -f 2>/dev/null || hostname)}"
+
+        if id "$LOGIN" >/dev/null 2>&1; then
+          printf "${Y}  !${O} účet %s už existuje, jen ho dorovnám\n" "$LOGIN"
+        else
+          useradd -m -s /bin/bash "$LOGIN" || die "účet se nepodařilo založit"
+          printf "${G}  ✓${O} účet %s\n" "$LOGIN"
+        fi
+
+        # Bez skupiny docker nespustí pod. Je to zároveň to nejcitlivější
+        # místo celého návrhu — viz varování na konci.
+        getent group docker >/dev/null && usermod -aG docker "$LOGIN"
+
+        HOME_DIR=$(getent passwd "$LOGIN" | cut -d: -f6)
+        install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.agenticdev"
+        install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.pi" "$HOME_DIR/.pi/agent"
+
+        # Device key té osoby. Identita v ledgeru je člověk na tomhle VPS,
+        # ne notebook — pody už na notebooku neběží.
+        KEYF="$HOME_DIR/.agenticdev/device.key"
+        if [[ ! -f "$KEYF" ]]; then
+          sudo -u "$LOGIN" ssh-keygen -q -t ed25519 -N '' -C "agenticdev-$LOGIN" -f "$KEYF"
+        fi
+        FP=$(ssh-keygen -lf "$KEYF.pub" | awk '{print $2}')
+
+        # SSH klíč do Forgeja, ať funguje git clone bez ptaní.
+        SSHK="$HOME_DIR/.ssh/id_ed25519"
+        if [[ ! -f "$SSHK" ]]; then
+          install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.ssh"
+          sudo -u "$LOGIN" ssh-keygen -q -t ed25519 -N '' -C "$LOGIN@agenticdev" -f "$SSHK"
+        fi
+
+        cat > "$HOME_DIR/.agenticdev/config" <<CFGEOF
+CONTROL_PLANE=http://${VPS_HOST}:8080
+DEVICE_KEY_FP=$FP
+HOSTNAME_=$LOGIN@$(hostname -s 2>/dev/null || hostname)
+CFGEOF
+        chown "$LOGIN:$LOGIN" "$HOME_DIR/.agenticdev/config"
+        chmod 600 "$HOME_DIR/.agenticdev/config"
+
+        RESP=$(curl -fsS -X POST "http://${VPS_HOST}:8080/v1/workstations/register" \
+          -H 'content-type: application/json' \
+          -d "$(jq -nc --arg t "$JOIN_TOKEN" --arg h "$LOGIN@$(hostname -s 2>/dev/null || hostname)" \
+                --arg f "$FP" --arg n "$FULL" --arg e "$MAIL" \
+                --arg k "$(cat "$SSHK.pub")" \
+                '{join_token:$t,hostname:$h,device_key_fp:$f,display_name:$n,email:$e,ssh_public_key:$k}')" \
+          2>/dev/null) || die "registrace u control plane selhala"
+        jq -e .workstation_id >/dev/null <<<"$RESP" || die "server odmítl: $RESP"
+        printf "${G}  ✓${O} zaregistrováno jako %s <%s>\n" "$FULL" "$MAIL"
+        jq -e '.git_ready == true' >/dev/null <<<"$RESP" \
+          && printf "${G}  ✓${O} SSH klíč ve Forgeju\n" \
+          || printf "${Y}  !${O} SSH klíč se do Forgeja nedostal (chybí FORGEJO_TOKEN?)\n"
+
+        printf "\n  Pošli tomu člověku:\n"
+        printf "    ${Y}tailscale ssh %s@%s${O}\n" "$LOGIN" "$(hostname -s 2>/dev/null || hostname)"
+        printf "    ${Y}agenticdev${O}\n"
+        printf "  ${D}Poprvé se v Pi přihlásí k modelu přes /login. Platí to pak dál.${O}\n"
+        printf "\n  ${Y}Pozor:${O} členství ve skupině docker je na tomhle stroji\n"
+        printf "  ${D}rovnocenné rootovi — ten člověk si přečte i %s.${O}\n\n" "$ENVF"
+        ;;
+      pending)
+        printf "\n${B}▸ Ohlásili se a čekají na účet${O}\n"
+        psql_out=$(dc exec -T postgres psql -qtAX -U agenticdev -d agenticdev -c \
+          "SELECT first_name||' '||last_name||E'\t'||email||E'\t'||coalesce(os,'-')
+             FROM enrollment WHERE claimed_at IS NULL ORDER BY created_at DESC LIMIT 50" 2>/dev/null)
+        if [[ -z "$psql_out" ]]; then
+          printf "  ${D}nikdo${O}\n\n"
+        else
+          printf '%s\n' "$psql_out" | while IFS=$'\t' read -r who mail os_; do
+            printf "  %-24s %-28s ${D}%s${O}\n" "$who" "$mail" "$os_"
+            printf "    ${Y}agenticdev-ctl user add %s \"%s\" %s${O}\n" \
+              "$(printf '%s' "${mail%%@*}" | tr -cd 'a-z0-9' | cut -c1-31)" "$who" "$mail"
+          done
+          echo
+        fi
+        ;;
+      list)
+        printf "\n${B}▸ Lidé s účtem na VPS${O}\n"
+        for h in /home/*; do
+          [[ -f "$h/.agenticdev/config" ]] || continue
+          printf "  %-16s %s\n" "$(basename "$h")" \
+            "$(grep -m1 '^DEVICE_KEY_FP=' "$h/.agenticdev/config" | cut -d= -f2-)"
+        done
+        echo
+        ;;
+      *) die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail] | user list | user pending" ;;
+    esac
+    ;;
+
   funnel)
     # Zvenčí smí být vidět jedna jediná cesta — registrace. Funnel jede
     # na 8443, aby si nelezl do cesty s Caddy na 443.
@@ -112,6 +212,11 @@ case "${1:-status}" in
     restart [služba]  restart
     logs [služba]     živé logy
     pull              stáhne novější image a restartuje
+
+    user add <login> ["Jméno Příjmení"] [e-mail]
+                      založí člověku účet na VPS, klíče a registraci
+    user list         kdo má na VPS účet
+    user pending      kdo se ohlásil a čeká na založení
 
     mac               vygeneruje instalátor Macu (svázaný s tímhle VPS)
     info              přihlašovací údaje a odkazy

@@ -390,6 +390,26 @@ def resolve(did: str, b: Resolve, op: dict = Depends(operator)):
 # ═══════════════════════════════════════════════════════════════
 #  Tým
 # ═══════════════════════════════════════════════════════════════
+@router.get("/v1/enrollments")
+def enrollments(op: dict = Depends(operator)):
+    """
+    Kdo se ohlásil na registrační stránce a ještě nemá účet na VPS.
+    Účty zakládá root příkazem `agenticdev-ctl user add`, protože control
+    plane na to nemá právo — tady je jen vidí, aby věděl koho.
+    """
+    with db() as c:
+        try:
+            return c.execute(
+                """SELECT e.*,
+                          EXISTS (SELECT 1 FROM principal p
+                                   WHERE lower(p.email) = lower(e.email)) AS has_account
+                   FROM enrollment e
+                   WHERE e.claimed_at IS NULL
+                   ORDER BY e.created_at DESC LIMIT 50""").fetchall()
+        except Exception:                      # tabulka ještě nemigrovala
+            return []
+
+
 @router.get("/v1/team")
 def team(op: dict = Depends(operator)):
     with db() as c:

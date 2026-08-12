@@ -28,6 +28,25 @@ STEPS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "enrollment — kdo se přihlásil a čeká na účet",
+        # Pody běží na VPS (ADR-0005), takže účet zakládá root příkazem
+        # `agenticdev-ctl user add`. Control plane na to nemá právo ani ho
+        # mít nemá, proto si jen zapíše, kdo se ohlásil, a správce to vidí.
+        """
+        CREATE TABLE IF NOT EXISTS enrollment (
+            id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+            first_name TEXT NOT NULL,
+            last_name  TEXT NOT NULL,
+            email      TEXT NOT NULL,
+            os         TEXT,
+            ip         TEXT,
+            created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+            claimed_at TIMESTAMPTZ,
+            claimed_by TEXT
+        )
+        """,
+    ),
+    (
         "event — append-only přes trigger místo pravidla",
         # Pravidlo na UPDATE blokovalo `INSERT ... ON CONFLICT` na event,
         # a tím KAŽDÝ zápis do auditní stopy. Instalace vydané předtím

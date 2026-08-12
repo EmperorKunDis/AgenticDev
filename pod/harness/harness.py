@@ -63,7 +63,10 @@ def load_policy() -> dict:
     except json.JSONDecodeError as e:
         fail(f"Policy je poškozená: {e}")
 
-    for key in ("project", "phase", "data_class", "scope", "model", "egress"):
+    # `model` tu záměrně není. Model si vybírá člověk ve svém přihlášení k
+    # Pi a umí ho přepnout za běhu, takže policy ho nemusí znát — hranicí
+    # je egress, ne jméno. Viz ADR-0004.
+    for key in ("project", "phase", "data_class", "scope", "egress"):
         if key not in p:
             fail(f"Policy nemá povinné pole '{key}'.")
     return p
@@ -71,22 +74,30 @@ def load_policy() -> dict:
 
 def check_model(p: dict) -> None:
     """
-    U citlivých dat nesmí odejít nic do cloudu. Tohle je tvrdý zákaz —
-    ne varování, ne preference.
+    NENÍ to záruka, je to čitelná hláška.
+
+    Pi umí model přepnout za běhu přes /model, takže cokoli, co se tu
+    zkontroluje, platí jen pro první požadavek. O tom, kam se agent
+    doopravdy dostane, rozhoduje egress allowlist — u restricted projektu
+    v něm žádný cloudový endpoint není. Viz ADR-0004.
     """
-    model = str(p["model"] or "")
+    model = str(p.get("model") or "")
     allow = p.get("model_allowlist") or []
 
     if p["data_class"] == "restricted":
-        if not model.startswith("local/"):
-            fail(f"Projekt je označený jako restricted, ale model je '{model}'.\n"
-                 f"   Povolené jsou jen lokální modely (local/…).")
-        note(f"model {model} — lokální, citlivá data neodejdou")
+        if model and not model.startswith("local/"):
+            note(f"{C_WARN}!{C_OFF} model {model} není lokální — egress ho stejně nepustí")
+        else:
+            note("jen lokální modely, cloud není v egressu")
         return
 
-    if allow and model not in allow:
-        fail(f"Model '{model}' není v allowlistu projektu: {', '.join(allow)}")
-    note(f"model {model}")
+    if model and allow and model not in allow:
+        note(f"{C_WARN}!{C_OFF} model {model} není v allowlistu projektu "
+             f"({', '.join(allow)}) — allowlist je vodítko, ne zákaz")
+    elif model:
+        note(f"model {model}")
+    else:
+        note("model si vybereš v Pi (/model)")
 
 
 def check_egress(p: dict) -> None:
@@ -187,18 +198,46 @@ def run_agent(p: dict) -> int:
         "AGENTICDEV_PROJECT": p["project"],
         "AGENTICDEV_PHASE": p["phase"],
         "AGENTICDEV_DATA_CLASS": p["data_class"],
-        "AGENTICDEV_MODEL": str(p["model"] or ""),
+        "AGENTICDEV_MODEL": str(p.get("model") or ""),
         "PATH": f"/workspace/bin:{env.get('PATH', '')}",
+        # Pod má uzavřený egress, takže cokoli, co Pi zkouší na startu
+        # mimo allowlist, jen čeká na timeout. Vypnout to je rychlost,
+        # ne omezení funkce.
+        "PI_OFFLINE": "1",
+        "PI_SKIP_VERSION_CHECK": "1",
+        "PI_TELEMETRY": "0",
     })
+
+    # HOME ukazuje do tmpfs, kde ten podadresář ještě není. Nástroje, které
+    # do domovského adresáře píšou, by jinak spadly na chybějící cestu.
+    home = env.get("HOME")
+    if home:
+        try:
+            pathlib.Path(home).mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            fail(f"Domovský adresář {home} se nepodařilo založit: {e}")
+
+    # Přihlášení k modelu je na člověka a připojuje ho launcher. Když tam
+    # není, Pi se nemá čím ověřit — lepší to říct teď než po první otázce.
+    pi_dir = env.get("PI_CODING_AGENT_DIR")
+    if pi_dir and not (pathlib.Path(pi_dir) / "auth.json").is_file():
+        print(f"{C_WARN}  V {pi_dir} není auth.json — v Pi se přihlas přes /login.{C_OFF}")
 
     agent = shutil.which("pi")
     if not agent:
         print(f"{C_WARN}  Pi v obrazu není — otevírám shell.{C_OFF}")
-        agent = "/bin/bash"
+        cmd = ["/bin/bash"]
+    else:
+        # `-a` = důvěřovat projektu pro tenhle běh. Bez toho Pi nenačte
+        # .pi/settings.json, skills ani agenticdev-git extension a jen se
+        # zeptá — a v podu není komu odpovědět trvale, protože
+        # ~/.pi/agent/trust.json je pokaždé nový. Důvěru dáváme vědomě:
+        # ten obsah poslal server, ne cizí repozitář.
+        cmd = [agent, "-a"]
 
     print()
     deadline = p.get("deadline_ts")
-    proc = subprocess.Popen([agent], cwd=str(WORKSPACE), env=env)
+    proc = subprocess.Popen(cmd, cwd=str(WORKSPACE), env=env)
 
     def stop(_sig, _frm):
         proc.terminate()

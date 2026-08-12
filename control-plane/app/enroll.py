@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 import secrets
 import time
 from pathlib import Path
@@ -117,6 +118,43 @@ def _mint_authkey(label: str) -> str | None:
 class JoinRequest(BaseModel):
     password: str
     os: str = "mac"
+    # Kdo se hlásí. Dřív se jméno hádalo z `id -F` a e-mail z
+    # `git config user.email`, takže v evidenci končilo „root" a prázdno.
+    # Teď se to musí říct — je to jediné místo, kde se člověk představí.
+    first_name: str = ""
+    last_name: str = ""
+    email: str = ""
+
+
+_MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
+
+
+def _need_identity(b: "JoinRequest") -> tuple[str, str, str]:
+    first, last = b.first_name.strip(), b.last_name.strip()
+    mail = b.email.strip()
+    missing = [n for n, v in (("jméno", first), ("příjmení", last), ("e-mail", mail)) if not v]
+    if missing:
+        raise HTTPException(400, f"chybí {', '.join(missing)}")
+    if not _MAIL_RE.match(mail):
+        raise HTTPException(400, "e-mail nevypadá jako e-mail")
+    return first, last, mail
+
+
+def _record_enrollment(first: str, last: str, mail: str, os_: str, ip: str) -> None:
+    """
+    Zapíše, kdo se ohlásil. Účet na VPS zakládá root zvlášť, takže tohle
+    je jediná stopa, ze které pozná, koho zavést. Selhat kvůli tomu celou
+    registraci by bylo horší než ta stopa — proto se chyba jen loguje.
+    """
+    try:
+        from .main import db
+        with db() as c:
+            c.execute(
+                """INSERT INTO enrollment (first_name, last_name, email, os, ip)
+                   VALUES (%s,%s,%s,%s,%s)""",
+                (first, last, mail, os_, ip))
+    except Exception as e:                             # noqa: BLE001
+        print(f"[enroll] zápis registrace se nepovedl: {e}")
 
 
 @router.post("/join/api")
@@ -136,7 +174,12 @@ def join(body: JoinRequest, request: Request):
         time.sleep(1.0)
         raise HTTPException(401, "špatné heslo")
 
+    # Identitu kontrolujeme až po hesle, ať se přes chybové hlášky nedá
+    # zjistit, jestli je heslo správné.
+    first, last, mail = _need_identity(body)
+
     _clear_attempts(ip)
+    _record_enrollment(first, last, mail, body.os, ip)
 
     key = _mint_authkey(ip)
     fp = hashlib.sha256(f"{INSTANCE_ID}\n{VERIFY_KEY}".encode()).hexdigest()

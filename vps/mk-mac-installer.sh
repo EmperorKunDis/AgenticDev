@@ -5,11 +5,13 @@
 #  Vyrobí JEDEN soubor svázaný S TOUTO instancí VPS:
 #     /srv/agenticdev/out/agenticdev-install-mac.sh
 #
-#  Vazba = čtyři věci zapečené do souboru při generování:
+#  Vazba = dvě věci zapečené do souboru při generování:
 #     1. adresa control plane (doména + tailnet fallback)
-#     2. join token — zná ho jen tenhle VPS
-#     3. fingerprint identity instance (ověří se proti /v1/identity)
-#     4. SSH host key Forgeja (pinned known_hosts)
+#     2. fingerprint identity instance (ověří se proti /v1/identity)
+#
+#  Join token v souboru NENÍ. Účty na VPS zakládá `agenticdev-ctl user add`
+#  (ADR-0005), takže klient se u control plane neregistruje a tenhle
+#  soubor není tajemství — může se posílat po Slacku.
 #
 #  Když ten soubor pustíš proti jiné instanci, odmítne se nainstalovat.
 #
@@ -29,7 +31,6 @@ BODY="$SRC/install-mac.sh"
 set -a; . "$ENVF"; set +a
 
 : "${AGENTICDEV_INSTANCE_ID:?v .env chybí AGENTICDEV_INSTANCE_ID}"
-: "${JOIN_TOKEN:?v .env chybí JOIN_TOKEN}"
 : "${WO_VERIFY_KEY_B64:?v .env chybí WO_VERIFY_KEY_B64}"
 : "${VPS_HOST:?v .env chybí VPS_HOST}"
 
@@ -43,10 +44,6 @@ fi
 # fingerprint identity — musí souhlasit s tím, co počítá /v1/identity
 IDENT="sha256:$(printf '%s\n%s' "$AGENTICDEV_INSTANCE_ID" "$WO_VERIFY_KEY_B64" \
                 | sha256sum | cut -d' ' -f1)"
-
-# host key Forgeja — ať se Mac při prvním clone neptá na fingerprint
-KH="$(ssh-keyscan -T 5 -p 2222 "$VPS_HOST" 2>/dev/null || true)"
-[[ -n "$KH" ]] || echo "  ! Forgejo ještě neodpovídá na 2222 — known_hosts se nepřipne" >&2
 
 STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 install -d -m 0750 "$OUT"
@@ -63,8 +60,8 @@ cat >"$TMP" <<EOF
 #  Instance:     $AGENTICDEV_INSTANCE_ID
 #  Control plane: $CP_PRIMARY
 #
-#  Tenhle soubor patří k JEDNÉ konkrétní instanci AgenticDev. Obsahuje
-#  join token — ber ho jako heslo, neposílej ho veřejným kanálem.
+#  Tenhle soubor patří k JEDNÉ konkrétní instanci AgenticDev. Proti jiné
+#  se odmítne nainstalovat. Tajemství v sobě nemá.
 #
 #  Použití na Macu:   bash agenticdev-install-mac.sh
 # ═══════════════════════════════════════════════════════════════
@@ -74,11 +71,9 @@ AGENTICDEV_INSTANCE="$AGENTICDEV_INSTANCE_ID"
 AGENTICDEV_CP_PRIMARY="$CP_PRIMARY"
 AGENTICDEV_CP_FALLBACK="$CP_FALLBACK"
 AGENTICDEV_IDENTITY="$IDENT"
-AGENTICDEV_JOIN_TOKEN="$JOIN_TOKEN"
 AGENTICDEV_GIT_HOST="$VPS_HOST"
 AGENTICDEV_GIT_PORT="2222"
 AGENTICDEV_GENERATED="$STAMP"
-AGENTICDEV_KNOWN_HOSTS_B64="$(printf '%s' "$KH" | base64 -w0)"
 AGENTICDEV_BODY_B64="$(base64 -w0 <"$BODY")"
 EOF
 
@@ -148,29 +143,16 @@ if [[ "$got_fp" != "$AGENTICDEV_IDENTITY" ]]; then
 fi
 ok "instance ${got_id:0:8} — souhlasí"
 
-# ═══ 3. Připni git host key ════════════════════════════════════
-if [[ -n "$AGENTICDEV_KNOWN_HOSTS_B64" ]]; then
-  step "Připínám SSH klíč gitu"
-  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
-  touch "$HOME/.ssh/known_hosts"; chmod 600 "$HOME/.ssh/known_hosts"
-  while IFS= read -r line; do
-    [[ -n "$line" ]] || continue
-    grep -qxF "$line" "$HOME/.ssh/known_hosts" 2>/dev/null \
-      || printf '%s\n' "$line" >> "$HOME/.ssh/known_hosts"
-  done < <(base64 --decode <<<"$AGENTICDEV_KNOWN_HOSTS_B64")
-  ok "$AGENTICDEV_GIT_HOST:$AGENTICDEV_GIT_PORT"
-fi
-
-# ═══ 4. Vlastní instalace ══════════════════════════════════════
+# ═══ 3. Vlastní instalace ══════════════════════════════════════
 BODY="$(mktemp "${TMPDIR:-/tmp}/agenticdev-install-mac.XXXXXX")"
 trap 'rm -f "$BODY"' EXIT
 base64 --decode <<<"$AGENTICDEV_BODY_B64" >"$BODY"
 export AGENTICDEV_CP="$CP"
 export AGENTICDEV_INSTANCE_ID="$AGENTICDEV_INSTANCE"
-bash "$BODY" "$AGENTICDEV_JOIN_TOKEN"
+bash "$BODY"
 OUTER
 
-install -m 0640 "$TMP" "$TARGET"
+install -m 0644 "$TMP" "$TARGET"
 ( cd "$OUT" && sha256sum "$(basename "$TARGET")" > "$(basename "$TARGET").sha256" )
 bash -n "$TARGET" || { echo "✗ vygenerovaný soubor má syntaktickou chybu" >&2; exit 1; }
 

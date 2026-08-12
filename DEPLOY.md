@@ -13,7 +13,7 @@ Anglická verze README je [tady](README.md), architektura
 
 | | |
 |---|---|
-| VPS | Debian 12 nebo Ubuntu 22.04/24.04, **4 GB RAM**, 20 GB disku, root přes SSH |
+| VPS | Debian 12 nebo Ubuntu 22.04/24.04, root přes SSH. **Paměť podle počtu lidí:** základ ~2,5 GB + ~1,5 GB na každého, kdo pracuje zároveň. Pro tři lidi tedy ~8 GB a ~40 GB disku. Pody běží tady, ne na notebooku. |
 | Tailscale | účet, do kterého se VPS i stroje týmu připojí |
 | Doména | **nepovinná** — bez ní jede platforma po tailnetu, což je bezpečnější |
 | Model | klíč k OpenAI-kompatibilnímu API nebo Anthropicu, nebo lokální Ollama |
@@ -40,7 +40,8 @@ Než začneš měnit systém, ať víš, že se to má cenu spustit:
 
 ```bash
 scp tools/preflight-vps.sh root@<vps>:/root/
-ssh root@<vps> 'bash /root/preflight-vps.sh'
+# AGENTICDEV_USERS = kolik lidí bude pracovat NARÁZ; podle toho se počítá paměť
+ssh root@<vps> 'AGENTICDEV_USERS=3 bash /root/preflight-vps.sh'
 ```
 
 Kontroluje distribuci, paměť, místo, obsazené porty, dosažitelnost
@@ -130,15 +131,42 @@ instalátory, které jsi rozeslal týmu, přestanou k serveru patřit.
 
 ---
 
-## 5. Stroje týmu
+## 5. Lidé v týmu
 
-Pošli lidem registrační odkaz z `agenticdev-info` (`JOIN_URL`). Odkaz je
-veřejný, **heslo posílej zvlášť a jiným kanálem**.
+Pody běží **na VPS** ([ADR-0005](docs/adr/0005-pod-bezi-na-vps.md)), takže
+každý člověk potřebuje na serveru účet. Zakládá ho root, jednou na člověka:
 
-Na stránce zadají heslo, vyberou svůj systém a dostanou dva příkazy:
-přihlásit se do tailnetu a spustit instalátor. Funguje macOS, Linux i
-Windows (přes WSL2). Instalátor je svázaný s touhle instancí — proti
-cizímu serveru se odmítne nainstalovat.
+```bash
+ssh root@<vps>
+agenticdev-ctl user add msvanda "Martin Švanda" martin@praut.cz
+```
+
+Ten příkaz založí účet, vygeneruje device key i SSH klíč, zaregistruje
+stanici u control plane, nahraje klíč do Forgeja a vypíše, co poslat
+dotyčnému. Ten pak pracuje takhle:
+
+```bash
+tailscale ssh msvanda@<vps>
+agenticdev                      # vyber projekt, Enter
+```
+
+Poprvé se v Pi přihlásí k modelu přes `/login` — vlastním předplatným nebo
+klíčem. Přihlášení mu zůstane v `~/.pi/agent` a platí dál
+([ADR-0007](docs/adr/0007-prostredi-sdilene-prihlaseni-na-cloveka.md)).
+Prostředí — skills, hooky, instrukce — chodí ze serveru a je pro všechny
+společné.
+
+> **Než přidáš prvního člověka, věz tohle.** Aby mohl spustit pod,
+> potřebuje být ve skupině `docker`, a to je na tomhle stroji rovnocenné
+> rootovi: přes Docker socket se dostane k `/srv/agenticdev/config/.env`,
+> tedy k podpisovému klíči a všem tajemstvím instance. Pro malý tým, který
+> si věří, je to snesitelné. **Nedávej účet na VPS nikomu, komu bys nedal
+> root** — externistovi, klientovi, juniorovi. Řešení (rootless Docker nebo
+> privilegovaný pomocník) hotové není.
+
+Registrační stránka s heslem (`JOIN_URL` z `agenticdev-info`) zůstává pro
+připojení stroje do tailnetu. Odkaz je veřejný, **heslo posílej zvlášť a
+jiným kanálem**.
 
 Když se odkaz nevypíše, Funnel se nezapnul:
 
@@ -200,17 +228,27 @@ stroj: rozdělaná práce dojede, nové work ordery se přestanou vydávat.
 
 ## 8. Co si po nasazení ověř vlastníma očima
 
-Smoke test pokrývá server. Tohle se dá ověřit jen na stroji vývojáře a
-stojí za to projít si to jednou ručně:
+Smoke test pokrývá server. Tohle vyžaduje Docker a živé Tailscale, takže
+to musí projít člověk. **Dokud tímhle neprojdeš, není ověřené, že agent
+pracuje** — smoke test to nezjistí.
 
-- [ ] Klik na ikonu **AgenticDev** otevře výběr projektu
-- [ ] Pod naběhne a agent odpoví
+Přihlas se jako obyčejný člověk, ne jako root: `tailscale ssh <login>@<vps>`
+
+- [ ] `agenticdev doctor` — všechno zelené, včetně přístupu k Dockeru
+- [ ] `agenticdev` otevře výběr projektu
+- [ ] Pod naběhne a **Pi se zeptá na model** (poprvé `/login`)
+- [ ] Skills a `agenticdev-git` jsou načtené — v Pi zkus `/git-list`.
+      Když Pi nabízí jen vestavěné příkazy, nepovedlo se `pi -a` a
+      prostředí ze serveru se nenačetlo
+- [ ] `git_checkpoint` projde — commit se **nesmí** zastavit na
+      „Author identity unknown"
 - [ ] Zápis mimo scope selže na `EROFS` — zkus si v `discovery` upravit
       soubor v `src/`
 - [ ] Ven se pod dostane jen na domény z allowlistu — zkus `curl` na
       něco, co v něm není
 - [ ] Po ukončení podu je větev odeslaná do gitu
-- [ ] Změna modelu v panelu se projeví bez restartu
+- [ ] Druhý člověk může pracovat **současně** s prvním a útrata sedí
+      každému na jeho účtu
 
 ---
 

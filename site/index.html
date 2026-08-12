@@ -370,12 +370,13 @@
     <div class="grid">
       <div class="card">
         <h3><span class="cs">Server</span><span class="en">Server</span></h3>
-        <p><span class="cs">VPS s Debianem 12 nebo Ubuntu 22.04/24.04, aspoň 4 GB RAM
-          a root. Docker, firewall, Postgres, git server i zálohy si nastaví
-          instalátor sám.</span>
-          <span class="en">A VPS running Debian 12 or Ubuntu 22.04/24.04, at least 4 GB
-          RAM, and root. Docker, the firewall, Postgres, the git server and backups
-          are set up by the installer.</span></p>
+        <p><span class="cs">VPS s Debianem 12 nebo Ubuntu 22.04/24.04 a root. Paměť
+          podle týmu: základ ~2,5 GB a ~1,5 GB na každého, kdo pracuje zároveň —
+          agenti běží tady. Zbytek si nastaví instalátor sám.</span>
+          <span class="en">A VPS running Debian 12 or Ubuntu 22.04/24.04, and root.
+          Memory scales with the team: ~2.5 GB for the stack plus ~1.5 GB per
+          person working at the same time — the agents run here. The installer
+          sets up the rest.</span></p>
       </div>
       <div class="card">
         <h3><span class="cs">Tailscale</span><span class="en">Tailscale</span></h3>
@@ -387,21 +388,21 @@
       </div>
       <div class="card">
         <h3><span class="cs">Stroje týmu</span><span class="en">Team machines</span></h3>
-        <p><span class="cs">macOS, Linux nebo Windows 10 (build 19041+) přes WSL2.
-          Na každém Docker — bez něj launcher agenta odmítne spustit, protože
-          by neběžel v izolaci.</span>
-          <span class="en">macOS, Linux, or Windows 10 (build 19041+) through WSL2.
-          Docker on each — without it the launcher refuses to start the agent,
-          because it would not be running in isolation.</span></p>
+        <p><span class="cs">macOS, Linux nebo Windows. Stačí Tailscale a ikona na
+          plochu — agent běží na serveru, takže na notebooku není Docker ani
+          nic dalšího potřeba.</span>
+          <span class="en">macOS, Linux, or Windows. Tailscale and a desktop icon
+          are enough — the agent runs on the server, so no Docker and nothing
+          else is needed on the laptop.</span></p>
       </div>
       <div class="card">
         <h3><span class="cs">Model</span><span class="en">A model</span></h3>
-        <p><span class="cs">Klíč k OpenAI-kompatibilnímu API nebo Anthropicu, anebo
-          lokální Ollama. U projektů s citlivými daty se cloud tvrdě zakáže a
-          lokální model je pak povinný.</span>
-          <span class="en">A key for an OpenAI-compatible API or Anthropic, or a local
-          Ollama. For projects marked sensitive the cloud is hard-blocked, which
-          makes a local model mandatory.</span></p>
+        <p><span class="cs">Každý se přihlásí svým předplatným nebo klíčem, jednou.
+          Útrata tak sedí tomu, kdo ji spotřeboval. U projektů s citlivými daty se
+          cloud tvrdě zakáže a je potřeba lokální model.</span>
+          <span class="en">Each person signs in with their own subscription or key,
+          once, so spend lands on whoever incurred it. For projects marked
+          sensitive the cloud is hard-blocked and a local model is required.</span></p>
       </div>
     </div>
   </div>

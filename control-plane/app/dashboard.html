@@ -227,6 +227,13 @@
       nepotřebuje.</p>
     </div>
 
+    <h2>Čekají na účet</h2>
+    <div class="panel">
+      <p class="hint" style="margin:0">Kdo se ohlásil na registrační stránce.
+      Účet na VPS zakládáš ty: <code>agenticdev-ctl user add &lt;login&gt;</code></p>
+    </div>
+    <div id="pending"></div>
+
     <h2>Pracovní stanice</h2>
     <div id="team"></div>
 
@@ -406,7 +413,25 @@ async function newProject(){
 }
 
 // ── tým ──
+async function loadPending(){
+  let e = [];
+  try { e = await api('/v1/enrollments'); } catch(err) { return; }
+  // Login navrhneme z e-mailu, ať správce nemusí nic vymýšlet.
+  const guess = m => (m||'').split('@')[0].replace(/[^a-z0-9]+/gi,'').toLowerCase().slice(0,31);
+  $('#pending').innerHTML = e.length
+    ? `<table><tr><th>Člověk</th><th>E-mail</th><th>Systém</th><th>Kdy</th><th>Příkaz</th></tr>` +
+      e.map(r=>`<tr>
+        <td>${esc(r.first_name)} ${esc(r.last_name)}${r.has_account?' <span class="tag">má účet</span>':''}</td>
+        <td class="mono">${esc(r.email)}</td>
+        <td class="dim">${esc(r.os||'-')}</td>
+        <td class="dim">${ago(r.created_at)}</td>
+        <td class="mono" style="font-size:12px">agenticdev-ctl user add ${esc(guess(r.email))} "${esc(r.first_name)} ${esc(r.last_name)}" ${esc(r.email)}</td>
+      </tr>`).join('') + `</table>`
+    : `<div class="empty">Nikdo nečeká.</div>`;
+}
+
 async function loadTeam(){
+  await loadPending();
   const t = await api('/v1/team');
   // Registrační odkaz vyrábí Tailscale Funnel a instalátor ho ukládá do
   // .env. Když tam není, Funnel se nezapnul — říct to natvrdo je lepší
