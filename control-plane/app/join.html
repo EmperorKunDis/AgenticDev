@@ -79,14 +79,28 @@
 <div class="card">
   <div class="logo" id="logo"><img src="/logo.svg" alt="AgenticDev" onerror="this.parentNode.textContent='AGENTICDEV'"></div>
   <h1>Připojení stroje</h1>
-  <p class="sub">Zadej heslo, které ti dal správce. Pak dostaneš dva příkazy.</p>
+  <p class="sub">Představ se a zadej heslo od správce. Pak dostaneš dva příkazy.</p>
 
   <div id="gate">
+    <label for="fn">Jméno</label>
+    <input id="fn" type="text" autocomplete="given-name" placeholder="Martin">
+
+    <label for="ln">Příjmení</label>
+    <input id="ln" type="text" autocomplete="family-name" placeholder="Švanda">
+
+    <label for="em">E-mail</label>
+    <input id="em" type="email" autocomplete="email" autocapitalize="off"
+           spellcheck="false" placeholder="martin@firma.cz">
+
     <label for="pw">Heslo</label>
     <input id="pw" type="password" autocomplete="current-password"
            autocapitalize="off" spellcheck="false" placeholder="••••••••••••">
     <button id="go">Pokračovat</button>
     <div class="msg" id="err"></div>
+    <p style="font-size:13px;opacity:.6;margin-top:14px">
+      Podle jména a e-mailu se pozná, kdo co spustil, a správce podle nich
+      založí účet. Heslo dostáváš od něj.
+    </p>
   </div>
 
   <div class="step" id="result">
@@ -138,13 +152,13 @@ function cmds() {
   } else if (OS === 'linux') {
     net = k ? `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up --authkey ${k}`
             : `curl -fsSL https://tailscale.com/install.sh | sh\nsudo tailscale up`;
-    inst = `curl -fsS -X POST ${BASE}installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh '${PW}'`;
+    inst = `curl -fsS -X POST ${BASE}installer \\\n  -H 'content-type: application/json' \\\n  -d '{"password":"${PW}","os":"linux"}' -o agenticdev-install.sh \\\n  && bash agenticdev-install.sh`;
   } else {
     net = k ? `winget install --id tailscale.tailscale\ntailscale up --authkey ${k}`
             : `winget install --id tailscale.tailscale\ntailscale up`;
     // PowerShell 5.1 neumí -OutFile u POSTu spolehlivě, proto přes
     // Invoke-WebRequest a zápis obsahu.
-    inst = `# PowerShell jako správce:\n$b = '{"password":"${PW}","os":"windows"}'\nInvoke-WebRequest -Uri '${BASE}installer' -Method Post -ContentType 'application/json' -Body $b -OutFile agenticdev-install.ps1\npowershell -ExecutionPolicy Bypass -File .\\agenticdev-install.ps1 -Token '${PW}'`;
+    inst = `# PowerShell jako správce:\n$b = '{"password":"${PW}","os":"windows"}'\nInvoke-WebRequest -Uri '${BASE}installer' -Method Post -ContentType 'application/json' -Body $b -OutFile agenticdev-install.ps1\npowershell -ExecutionPolicy Bypass -File .\\agenticdev-install.ps1`;
   }
   return [net, inst];
 }
@@ -160,7 +174,14 @@ function render() {
 
 async function go() {
   const pw = $('#pw').value.trim();
-  if (!pw) return;
+  const fn = $('#fn').value.trim();
+  const ln = $('#ln').value.trim();
+  const em = $('#em').value.trim();
+  if (!fn || !ln || !em || !pw) {
+    $('#err').textContent = 'Vyplň jméno, příjmení, e-mail i heslo.';
+    $('#err').className = 'msg err';
+    return;
+  }
   $('#go').disabled = true;
   $('#err').className = 'msg';
 
@@ -168,7 +189,7 @@ async function go() {
     const r = await fetch(BASE + 'api', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ password: pw })
+      body: JSON.stringify({ password: pw, first_name: fn, last_name: ln, email: em })
     });
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.detail || 'nepodařilo se');

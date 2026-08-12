@@ -47,23 +47,42 @@ esac
 
 # ─── Paměť a místo ─────────────────────────────────────────────
 hdr "Zdroje"
+# Pody běží na VPS (ADR-0005), takže paměť už neplatí jen za základní
+# stack — každý, kdo zároveň pracuje, si vezme svůj kontejner s agentem.
+# Základ (Postgres, Forgejo, MinIO, control plane, Caddy) ~2,5 GB,
+# jeden pod s agentem ~1,5 GB. Kolik lidí naráz řekni přes AGENTICDEV_USERS.
+USERS="${AGENTICDEV_USERS:-3}"
+NEED_MB=$(( 2500 + USERS * 1500 ))
+
 MEM_MB=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null || echo 0)
-if   (( MEM_MB >= 3800 )); then ok "RAM ${MEM_MB} MB"
-elif (( MEM_MB >= 1800 )); then
-  soft "RAM ${MEM_MB} MB — doporučené minimum je 4 GB"
-  info "Postgres, Forgejo a MinIO se do 2 GB vejdou jen na zkoušku"
-else bad "RAM ${MEM_MB} MB je málo, potřebuješ aspoň 2 GB"
+if   (( MEM_MB >= NEED_MB )); then
+  ok "RAM ${MEM_MB} MB (pro $USERS lidí naráz stačí ${NEED_MB} MB)"
+elif (( MEM_MB >= 2500 + 1500 )); then
+  soft "RAM ${MEM_MB} MB — na $USERS lidí naráz je potřeba ${NEED_MB} MB"
+  info "základ ~2,5 GB + ~1,5 GB na každého, kdo pracuje zároveň"
+  info "s méně pamětí to pojede, ale ne pro celý tým současně"
+else
+  bad "RAM ${MEM_MB} MB je málo — základ a jeden pod chtějí aspoň 4 GB"
 fi
 
+# Obrazy podu a agenta, data Postgresu, repozitáře ve Forgeju a worktree
+# každého člověka. Na notebooku to dřív bylo rozprostřené, teď je to tady.
 DISK_GB=$(df -BG --output=avail /srv 2>/dev/null | tail -1 | tr -dc '0-9' || echo 0)
 : "${DISK_GB:=0}"
-if   (( DISK_GB >= 20 )); then ok "volné místo ${DISK_GB} GB"
-elif (( DISK_GB >= 10 )); then soft "volné místo ${DISK_GB} GB — obrazy a data vyrostou"
-else bad "volné místo ${DISK_GB} GB je málo, potřebuješ aspoň 10 GB"
+NEED_GB=$(( 25 + USERS * 5 ))
+if   (( DISK_GB >= NEED_GB )); then ok "volné místo ${DISK_GB} GB"
+elif (( DISK_GB >= 20 )); then
+  soft "volné místo ${DISK_GB} GB — na $USERS lidí počítej s ${NEED_GB} GB"
+  info "obrazy, data Postgresu a worktree každého člověka"
+else bad "volné místo ${DISK_GB} GB je málo, potřebuješ aspoň 20 GB"
 fi
 
 CORES=$(nproc 2>/dev/null || echo 1)
-(( CORES >= 2 )) && ok "$CORES jader" || soft "$CORES jádro — build control plane potrvá"
+NEED_CORES=$(( USERS > 2 ? USERS : 2 ))
+if   (( CORES >= NEED_CORES )); then ok "$CORES jader"
+elif (( CORES >= 2 )); then soft "$CORES jader — na $USERS lidí naráz je to málo"
+else soft "$CORES jádro — build control plane potrvá"
+fi
 
 # ─── Porty ─────────────────────────────────────────────────────
 hdr "Porty"

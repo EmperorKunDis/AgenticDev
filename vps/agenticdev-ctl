@@ -117,6 +117,22 @@ CFGEOF
         printf "\n  ${Y}Pozor:${O} členství ve skupině docker je na tomhle stroji\n"
         printf "  ${D}rovnocenné rootovi — ten člověk si přečte i %s.${O}\n\n" "$ENVF"
         ;;
+      pending)
+        printf "\n${B}▸ Ohlásili se a čekají na účet${O}\n"
+        psql_out=$(dc exec -T postgres psql -qtAX -U agenticdev -d agenticdev -c \
+          "SELECT first_name||' '||last_name||E'\t'||email||E'\t'||coalesce(os,'-')
+             FROM enrollment WHERE claimed_at IS NULL ORDER BY created_at DESC LIMIT 50" 2>/dev/null)
+        if [[ -z "$psql_out" ]]; then
+          printf "  ${D}nikdo${O}\n\n"
+        else
+          printf '%s\n' "$psql_out" | while IFS=$'\t' read -r who mail os_; do
+            printf "  %-24s %-28s ${D}%s${O}\n" "$who" "$mail" "$os_"
+            printf "    ${Y}agenticdev-ctl user add %s \"%s\" %s${O}\n" \
+              "$(printf '%s' "${mail%%@*}" | tr -cd 'a-z0-9' | cut -c1-31)" "$who" "$mail"
+          done
+          echo
+        fi
+        ;;
       list)
         printf "\n${B}▸ Lidé s účtem na VPS${O}\n"
         for h in /home/*; do
@@ -126,7 +142,7 @@ CFGEOF
         done
         echo
         ;;
-      *) die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail] | user list" ;;
+      *) die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail] | user list | user pending" ;;
     esac
     ;;
 
@@ -200,6 +216,7 @@ CFGEOF
     user add <login> ["Jméno Příjmení"] [e-mail]
                       založí člověku účet na VPS, klíče a registraci
     user list         kdo má na VPS účet
+    user pending      kdo se ohlásil a čeká na založení
 
     mac               vygeneruje instalátor Macu (svázaný s tímhle VPS)
     info              přihlašovací údaje a odkazy

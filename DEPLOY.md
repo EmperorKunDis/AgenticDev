@@ -13,7 +13,7 @@ Anglická verze README je [tady](README.md), architektura
 
 | | |
 |---|---|
-| VPS | Debian 12 nebo Ubuntu 22.04/24.04, **4 GB RAM**, 20 GB disku, root přes SSH |
+| VPS | Debian 12 nebo Ubuntu 22.04/24.04, root přes SSH. **Paměť podle počtu lidí:** základ ~2,5 GB + ~1,5 GB na každého, kdo pracuje zároveň. Pro tři lidi tedy ~8 GB a ~40 GB disku. Pody běží tady, ne na notebooku. |
 | Tailscale | účet, do kterého se VPS i stroje týmu připojí |
 | Doména | **nepovinná** — bez ní jede platforma po tailnetu, což je bezpečnější |
 | Model | klíč k OpenAI-kompatibilnímu API nebo Anthropicu, nebo lokální Ollama |
@@ -40,7 +40,8 @@ Než začneš měnit systém, ať víš, že se to má cenu spustit:
 
 ```bash
 scp tools/preflight-vps.sh root@<vps>:/root/
-ssh root@<vps> 'bash /root/preflight-vps.sh'
+# AGENTICDEV_USERS = kolik lidí bude pracovat NARÁZ; podle toho se počítá paměť
+ssh root@<vps> 'AGENTICDEV_USERS=3 bash /root/preflight-vps.sh'
 ```
 
 Kontroluje distribuci, paměť, místo, obsazené porty, dosažitelnost

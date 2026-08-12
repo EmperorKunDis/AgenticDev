@@ -1,22 +1,31 @@
 #!/usr/bin/env bash
-# Spouštěč pro Linux. Ekvivalent AgenticDev.app na macOS: najde terminál,
-# otevře ho a spustí v něm `agenticdev work`.
+# ═══════════════════════════════════════════════════════════════
+#  Spouštěč pro Linux. Ekvivalent AgenticDev.app na macOS.
+#
+#  Agent běží na VPS (ADR-0005), takže tohle jen najde terminál a spustí
+#  v něm Tailscale SSH na server. Nic se tu nepočítá ani neinstaluje.
+# ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
-AGENTICDEV=""
-for c in /usr/local/bin/agenticdev "$HOME/.local/bin/agenticdev" "$HOME/bin/agenticdev"; do
-  [[ -x "$c" ]] && { AGENTICDEV="$c"; break; }
-done
+CFG="$HOME/.agenticdev/vps"
 
-if [[ -z "$AGENTICDEV" ]]; then
-  msg="AgenticDev není nainstalovaný. Pusť instalaci, kterou ti poslal správce."
-  command -v zenity   >/dev/null && exec zenity --error --text="$msg"
-  command -v kdialog  >/dev/null && exec kdialog --error "$msg"
+fail() {
+  local msg="$1"
+  command -v zenity      >/dev/null && exec zenity --error --text="$msg"
+  command -v kdialog     >/dev/null && exec kdialog --error "$msg"
   command -v notify-send >/dev/null && exec notify-send "AgenticDev" "$msg"
   echo "$msg" >&2; exit 1
-fi
+}
 
-CMD="$AGENTICDEV work"
+[[ -f "$CFG" ]] || fail "AgenticDev není připojený. Pusť instalaci, kterou ti poslal správce."
+# shellcheck disable=SC1090
+. "$CFG"
+: "${AGENTICDEV_VPS:?}" "${AGENTICDEV_LOGIN:?}"
+
+command -v tailscale >/dev/null || fail "Tailscale není nainstalovaný."
+tailscale status >/dev/null 2>&1 || fail "Nejsi v tailnetu. Spusť: sudo tailscale up"
+
+CMD="tailscale ssh ${AGENTICDEV_LOGIN}@${AGENTICDEV_VPS} agenticdev work"
 
 # Terminály se liší v tom, jak se jim předává příkaz. Bereme první,
 # který na stroji je.
@@ -36,5 +45,4 @@ for t in ghostty kitty alacritty wezterm gnome-terminal konsole \
   esac
 done
 
-echo "Nenašel jsem terminál. Spusť ručně: $CMD" >&2
-exit 1
+fail "Nenašel jsem terminál. Spusť ručně: $CMD"

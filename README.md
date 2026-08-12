@@ -1,15 +1,16 @@
 # AgenticDev
 
 **Self-hosted agentic development platform.** One VPS holds all data,
-context, and orchestration. Developers run the agent on their own machine
-against a project checkout, with instructions, scope, and phase supplied by
-the server — and decisions, runs, and costs written back to an auditable
-ledger.
+context, orchestration — and the agents themselves. Developers connect to
+it over Tailscale SSH and work in a disposable container, with
+instructions, scope, and phase supplied by the server, and decisions,
+runs, and costs written back to an auditable ledger. Nothing but Tailscale
+is installed on their machines.
 
 🇨🇿 [Česká verze tohoto dokumentu](README.cs.md)
 
-> **Status: alpha.** The sandbox and the Windows and Linux clients have not
-> yet been exercised in production. Read
+> **Status: alpha.** The sandbox has not yet been exercised against a real
+> Docker daemon, and Tailscale Funnel has not been tested end to end. Read
 > [Known limitations](#known-limitations) before you deploy this.
 
 ---
@@ -27,8 +28,9 @@ hope for the best. AgenticDev inverts that:
   in Postgres on your own server, not in someone's chat history. The audit
   trail on top of them is append-only and hash-chained — the database
   refuses an `UPDATE`, a `DELETE`, or a `TRUNCATE` on it.
-- **Onboarding is one link.** A new machine joins with a password and
-  registers itself; you revoke it from the panel.
+- **Onboarding is one link.** A person joins with a password, states who
+  they are, and the admin gives them an account on the server with one
+  command; you revoke it from the panel.
 
 - **The agent is sandboxed.** It runs in a container with no route to the
   internet — the only path out is a proxy that allows the domains you list.
@@ -45,10 +47,10 @@ installed it.
 
 | | |
 |---|---|
-| Server | Debian 12 or Ubuntu 22.04/24.04, 4 GB RAM minimum, root access |
+| Server | Debian 12 or Ubuntu 22.04/24.04, root access. **Sized by team:** ~2.5 GB RAM for the stack plus ~1.5 GB per person working *at the same time* — the agents run here, so about 8 GB for three people |
 | Network | **Tailscale** — hard requirement, not optional |
-| Clients | macOS, Linux, or Windows 10 build 19041+ (via WSL2) — plus Docker, which the installer sets up |
-| Optional | A model provider API key, or a local Ollama instance |
+| Clients | macOS, Linux, or Windows. Tailscale and a desktop icon; no Docker, no WSL2 |
+| Models | Each person signs in with their own subscription or API key, once, from the server |
 
 **Before you install**, two things in your Tailscale admin console:
 
@@ -126,19 +128,37 @@ password alone. Leave the domain empty to keep everything except enrollment
 on the tailnet, which is the safer default and what the rest of this
 document assumes.
 
-### 2. Clients — unlimited machines, anywhere
+### 2. People — an account each, on the server
 
-Send the enrollment link to anyone. They open it, type the join password,
-pick their operating system, and get two commands to paste.
+Send the enrollment link to anyone. They open it, **give their name, surname
+and email**, type the join password, and get two commands: join the tailnet,
+and run a thin installer that sets up Tailscale and a desktop icon. No
+Docker, no WSL2 — nothing heavy lands on their machine.
 
-**macOS · Linux · Windows.** Windows runs through WSL2.
+They then appear in the panel under *čekají na účet*, with the exact command
+to run:
 
-The installer registers that machine under the person's own name and email,
-uploads their SSH key to Forgejo, and puts a **AgenticDev icon** on their desktop.
-Clicking it opens the agent and a project picker.
+```bash
+agenticdev-ctl user add msvanda "Martin Švanda" martin@praut.cz
+```
 
-They show up in the admin panel's *team* tab, where you can revoke any single
-machine.
+That creates their account on the VPS, generates their keys, registers them,
+and uploads their SSH key to Forgejo. They work by clicking the icon, or:
+
+```bash
+tailscale ssh msvanda@your-vps
+agenticdev
+```
+
+The first time, they sign in to a model inside Pi with `/login` — their own
+subscription or key. It stays in their own `~/.pi/agent` and is not shared,
+so two people can work at once and each pays for their own usage.
+
+> **An account on the VPS needs the `docker` group, and that is equivalent to
+> root on that machine** — through the Docker socket you can read
+> `/srv/agenticdev/config/.env`, which holds the signing key and every other
+> secret. Fine for a small team that trusts itself. Do not give an account to
+> anyone you would not give root.
 
 **What is actually exposed to the internet:** exactly one path — the
 enrollment page — published through [Tailscale
@@ -163,12 +183,13 @@ is the lever that changes what an agent may write to — see below.
 
 ## Daily use
 
-Click the **AgenticDev** icon, or from a terminal:
+Click the **AgenticDev** icon — it opens a terminal on the server — or from
+a shell on the VPS:
 
 ```bash
 agenticdev work                 # pick a project, get a task, start a pod
 agenticdev work acme            # straight to one project
-agenticdev doctor          # check local prerequisites
+agenticdev doctor               # check Docker access and model login
 ```
 
 `adev` works as a shorthand for `agenticdev`.
@@ -181,8 +202,8 @@ Teardown removes all of it.
 
 ## How the sandbox works
 
-`agenticdev work` does not run the agent on your machine. It brings up two
-containers:
+`agenticdev work` runs on the VPS and brings up two containers there — not
+on your machine:
 
 ```
    egress ── allowlist ──► internet

@@ -127,8 +127,17 @@ code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -X POST "$API/join/
 [[ "$code" == "401" ]] && ok "špatné heslo odmítnuto (401)" || bad "špatné heslo vrátilo $code, čekal jsem 401"
 
 if [[ -n "${ENROLL_PASSWORD:-}" ]]; then
+  # Správné heslo bez identity musí projít neúspěchem: bez jména a e-mailu
+  # by v evidenci skončilo prázdno a agent by neměl čím commitovat.
+  code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -X POST "$API/join/api" \
+         -H 'content-type: application/json' \
+         -d "$(printf '{"password":"%s"}' "$ENROLL_PASSWORD")" 2>/dev/null)
+  [[ "$code" == "400" ]] && ok "registrace bez jména a e-mailu odmítnuta (400)" \
+    || bad "registrace bez identity vrátila $code, čekal jsem 400"
+
   JOINED=$(curl -sS --max-time 10 -X POST "$API/join/api" -H 'content-type: application/json' \
-           -d "$(printf '{"password":"%s"}' "$ENROLL_PASSWORD")" 2>/dev/null)
+           -d "$(printf '{"password":"%s","first_name":"Smoke","last_name":"Test","email":"smoke@example.com"}' \
+                 "$ENROLL_PASSWORD")" 2>/dev/null)
   if printf '%s' "$JOINED" | grep -q '"ok":true'; then
     ok "správné heslo projde"
     printf '%s' "$JOINED" | grep -q '"have_installer":true' \
