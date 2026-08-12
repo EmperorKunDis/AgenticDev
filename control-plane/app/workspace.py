@@ -114,6 +114,13 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
                WHERE ph.project_id = %s AND t.state = 'ready'
                ORDER BY t.priority, t.created_at LIMIT 20""", (proj["id"],)).fetchall()
 
+        # Kdo commituje. V podu není žádný ~/.gitconfig, takže bez tohohle
+        # spadne agentovi každý commit na "Author identity unknown" — a
+        # `agenticdev-git` commituje u každého checkpointu.
+        who = c.execute(
+            "SELECT display_name, email FROM principal WHERE id = %s",
+            (ws["principal_id"],)).fetchone() or {}
+
         c.execute(
             """INSERT INTO event (actor_id, subject_type, subject_id, verb, payload, dedupe_key)
                VALUES (%s,'project',%s,'workspace_served',%s,%s)
@@ -191,6 +198,13 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
         "scope": scope,
         "ready_tasks": len(tasks),
         "files": files,
+        # Podpis commitů. Launcher to předá podu proměnnými, ne
+        # .gitconfigem — v podu není domovský adresář, na který se dá
+        # spolehnout.
+        "author": {
+            "name": who.get("display_name") or "AgenticDev agent",
+            "email": who.get("email") or "agent@agenticdev.local",
+        },
         # Pro sandbox: co pod smí ven a kolik tokenů smí spotřebovat.
         # Control plane sem patří vždycky, doplní si ho launcher.
         "egress_allowlist": [

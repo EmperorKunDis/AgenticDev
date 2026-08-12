@@ -46,6 +46,19 @@ README i web tvrdí, že agent běží na tvém stroji. To přestává být prav
 a musí se srovnat, jinak je to zase dokumentace popisující něco, co v kódu
 není.
 
-Otevřené zůstává, jak se vývojář ke svému podu připojí a jestli je
-`~/.pi/agent` jeden společný, nebo na člověka — u předplatných účtů to má
-důsledky, které nejsou technické.
+**Každý člověk potřebuje na VPS účet ve skupině `docker`, a to je na
+tomhle stroji rovnocenné rootovi.** Kdo smí mluvit s Docker socketem, umí
+si nastartovat kontejner s připojeným `/`, takže si přečte
+`/srv/agenticdev/config/.env` — podpisový klíč work orderů, heslo k
+databázi, všechna tajemství instance. Dokud pody běžely na notebooku,
+tenhle problém neexistoval, protože socket byl na notebooku.
+
+Pro tříčlenný tým, který si věří, je to snesitelné a je to i dnešní stav
+mnoha firem. Přestává to být snesitelné ve chvíli, kdy má na VPS účet
+někdo, komu nechceš dát root — externista, junior, klient. Cesty ven jsou
+rootless Docker na člověka, nebo privilegovaný pomocník, který pod
+nastartuje za uživatele, aby sám socket nepotřeboval. Ani jedno není
+hotové a je to největší nezavřená věc tohohle rozhodnutí.
+
+Zbývá dořešit, jak se vývojář k podu připojí — zatím Tailscale SSH a
+`agenticdev` na VPS.

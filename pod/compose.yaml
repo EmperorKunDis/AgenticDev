@@ -78,6 +78,23 @@ services:
       AGENTICDEV_TREES: /trees
       TERM: ${TERM:-xterm-256color}
 
+      # Přihlášení k modelu a sessions jsou na člověka, ne na instanci.
+      # Ukazujeme Pi na připojený adresář, ať nezáleží na tom, jaké má
+      # uid v obrazu domovský adresář. Viz ADR-0007.
+      PI_CODING_AGENT_DIR: /pi
+
+      # V podu není ~/.gitconfig, takže bez tohohle spadne agentovi každý
+      # commit na "Author identity unknown". Jméno a e-mail posílá server
+      # podle toho, kdo je přihlášený.
+      GIT_AUTHOR_NAME:     ${AGENTICDEV_AUTHOR_NAME}
+      GIT_AUTHOR_EMAIL:    ${AGENTICDEV_AUTHOR_EMAIL}
+      GIT_COMMITTER_NAME:  ${AGENTICDEV_AUTHOR_NAME}
+      GIT_COMMITTER_EMAIL: ${AGENTICDEV_AUTHOR_EMAIL}
+
+      # HOME leží na tmpfs: nástroje si do něj smí psát, ale po teardownu
+      # z něj nic nezůstane. Co má přežít, je v /pi.
+      HOME: /run/agenticdev/home
+
     volumes:
       # Repozitář read-only. Zapisovatelné cesty dopisuje launcher
       # do compose.override.yaml podle scope.
@@ -87,6 +104,10 @@ services:
       # Worktree rozdělaných úkolů. Musí ležet na hostiteli, jinak by
       # se s podem smazaly.
       - ${AGENTICDEV_TREES_DIR}:/trees:rw
+      # Přihlášení k modelu a sessions toho člověka. Zapisovatelné —
+      # Pi si obnovuje tokeny a ukládá transkripty. Prostředí (skills,
+      # hooky, nastavení) tady NENÍ, to posílá server do projektu.
+      - ${AGENTICDEV_PI_DIR}:/pi:rw
 
     # Tajemství na tmpfs — po zastavení podu nezůstanou na disku.
     tmpfs:
