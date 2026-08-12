@@ -1,7 +1,12 @@
 # ADR-0002: Klíč k modelu zůstává na stroji vývojáře
 
-**Stav:** přijato
+**Stav:** nahrazeno [ADR-0005](0005-pod-bezi-na-vps.md)
 **Datum:** 12. 8. 2026
+
+> Rozhodnutí neplatí. Pod se přestěhoval na VPS, takže konfigurace Pi i
+> přihlášení k modelu leží tam, ne na stroji vývojáře. Záznam zůstává,
+> protože důsledky, které popisuje — hlavně že bez brány není co počítat
+> přesně — platí dál.
 
 ## Kontext
 

@@ -21,15 +21,18 @@ Viz [ADR-0001](docs/adr/0001-agent-je-pi.md).
 
 ## Model
 
-Inteligence, kterou agent volá. Vybírá si ji a platí **vývojář na svém
-stroji**; server ji nedodává a klíč k ní nikdy nedrží. Server volbu jen
-omezuje — `model_allowlist` u projektu říká, co je povolené, egress
-allowlist rozhoduje, na kterou doménu se pod vůbec dostane.
+Inteligence, kterou agent volá. Přihlášení k ní leží v
+`~/.pi/agent/auth.json` **na VPS**, protože tam běží i pod. Pi se
+přihlašuje buď předplatným přes OAuth (`/login`), nebo API klíčem.
+`model_allowlist` u projektu je údaj pro lidi; skutečnou hranicí je egress
+allowlist.
 
 _Vyhýbej se_: „agent" (to je program, který model volá), „AI",
-„dodavatel" bez upřesnění, jestli jde o firmu, nebo o endpoint.
+„Claude Code v Pi" a „Codex v Pi" — Claude Code a Codex jsou samostatné
+produkty a v Pi neběží. Pi se přihlašuje ke **stejnému předplatnému**:
+Anthropic pro Claude Pro/Max, ChatGPT Plus/Pro pro modely OpenAI.
 
-Viz [ADR-0002](docs/adr/0002-klic-k-modelu-u-vyvojare.md).
+Viz [ADR-0005](docs/adr/0005-pod-bezi-na-vps.md).
 
 ## Director
 
