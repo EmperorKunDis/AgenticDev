@@ -34,12 +34,27 @@ Viz [ADR-0002](docs/adr/0002-klic-k-modelu-u-vyvojare.md).
 ## Director
 
 Postup, kterým musí úkol projít, a limity, kolik se smí opakovat.
-Vynucuje ho harness uvnitř podu, ne server.
+Vynucuje ho harness uvnitř podu, ne server. Selhání fáze se zapíše do
+ledgeru a zkusí se opravit; když se to povede, pokračuje se dál, a když
+se limit z work orderu vyčerpá, úkol jde do `blocked`. Přes fázi, která
+zůstala neopravená, se nepokračuje.
 
 _Vyhýbej se_: „orchestrátor", „workflow" (to je běh v Actions).
 Pozor: tabulka `director_version` v databázi popisuje directora jako
 zvlášť verzovaný a podepsaný artefakt s kanály. Tak to dneska není a
 [ADR-0003](docs/adr/0003-postup-ukolu-vynucuje-harness.md) říká proč.
+
+## Restricted
+
+Třída dat, u které nesmí obsah projektu opustit firmu. Vynucuje se tím,
+že server pošle egress allowlist **bez jakéhokoli cloudového endpointu** —
+pod se ke cloudu nedostane, ať si v Pi kdokoli vybere cokoli. Kontrola
+jména modelu v harnessu je jen brzká hláška; závazná je allowlist.
+
+_Vyhýbej se_: „citlivý projekt" bez upřesnění třídy dat, a hlavně
+představě, že to hlídá jméno modelu — Pi ho umí přepnout za běhu.
+
+Viz [ADR-0004](docs/adr/0004-restricted-vynucuje-egress.md).
 
 ## Připojení stroje
 
