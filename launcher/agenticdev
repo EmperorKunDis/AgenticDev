@@ -282,6 +282,49 @@ ENVF
         && ok "odesláno" || warn "push se nepovedl — zkus ručně: git -C $ws push -u origin $branch"
     fi
   fi
+
+  # Agent dokončil úkol přes `agenticdev-git finish`. Ten nepushuje ani
+  # neotevírá PR — nemá k repozitáři přístup a token do Forgeja mu dát
+  # nechceme. Doděláme to tady, na hostiteli, kde klíč i token patří.
+  finish_task "$ws" "$t"
+}
+
+# Odeslání dokončené větve a založení PR. Hledá vzkaz, který v podu nechal
+# `agenticdev-git finish`.
+finish_task() {
+  local ws="$1" t="$2" f
+  for f in "$ws/.agenticdev/finished" "$ws"/../.agenticdev-trees/*/.agenticdev/finished; do
+    [[ -f "$f" ]] || continue
+    local wt br base title tid body
+    wt=$(cd "$(dirname "$f")/.." && pwd)
+    br=$(jq -r '.branch // ""' "$f")
+    base=$(jq -r '.base // "main"' "$f")
+    title=$(jq -r '.title // ""' "$f")
+    tid=$(jq -r '.task_id // ""' "$f")
+    body=$(jq -r '.body // ""' "$f")
+    [[ -n "$br" ]] || { rm -f "$f"; continue; }
+
+    c "Odesílám dokončenou větev $br"
+    if ! git -C "$wt" push -q -u origin "$br" --force-with-lease 2>/dev/null; then
+      warn "push $br se nepovedl — vzkaz nechávám, zkusí se příště"
+      continue
+    fi
+    git -C "$wt" push -q origin refs/notes/agenticdev 2>/dev/null || true
+    ok "odesláno"
+
+    if [[ -z "$tid" ]]; then
+      warn "ve vzkazu není task_id — PR otevři ručně"
+      rm -f "$f"; continue
+    fi
+    local r
+    r=$(curl -fsS -X POST "$CONTROL_PLANE/v1/tasks/$tid/pull-request" \
+          -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+          -d "$(jq -nc --arg b "$br" --arg ba "$base" --arg ti "$title" --arg bo "$body" \
+                '{task_id:"", branch:$b, base:$ba, title:$ti, body:$bo}')" 2>/dev/null) \
+      && ok "PR: $(jq -r '.url // .note // "otevřen"' <<<"$r")" \
+      || warn "PR se nepodařilo otevřít — zkus to z panelu"
+    rm -f "$f"
+  done
 }
 
 cmd_doctor() {

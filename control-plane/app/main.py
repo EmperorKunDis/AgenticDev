@@ -439,10 +439,12 @@ from pathlib import Path as _P                                  # noqa: E402
 from .admin import router as _admin_router                       # noqa: E402
 from .workspace import router as _ws_router                       # noqa: E402
 from .enroll import router as _enroll_router                      # noqa: E402
+from .hooks import router as _hooks_router                        # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_ws_router)
 app.include_router(_enroll_router)
+app.include_router(_hooks_router)
 
 
 @app.on_event("startup")

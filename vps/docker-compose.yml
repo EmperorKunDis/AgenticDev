@@ -97,6 +97,34 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
 
+  # ─── Brána před mergem ───────────────────────────────────────
+  # Runner pouští workflow z repozitářů projektů. Smysl je v tom, že to
+  # NENÍ pod agenta: testy ověřuje něco jiného než ten, kdo je napsal
+  # (ADR-0006).
+  #
+  # POZOR: runner potřebuje Docker socket, aby uměl spouštět joby v
+  # kontejnerech. Kdo umí mluvit s tímhle socketem, je na tomhle stroji
+  # rovnocenný rootovi. Běží to vedle databáze a podpisového klíče a je to
+  # vědomý kompromis, ne nedopatření.
+  runner:
+    <<: [*restart, *logging]
+    image: code.forgejo.org/forgejo/runner:${RUNNER_TAG:-6}
+    profiles: ["gate"]          # bez registrace nemá co dělat
+    user: root
+    command: >-
+      sh -c "forgejo-runner create-runner-file --instance $${FORGEJO_INSTANCE}
+               --secret $${RUNNER_SECRET} --connect || true;
+             forgejo-runner daemon"
+    environment:
+      FORGEJO_INSTANCE: http://forgejo:3000
+      RUNNER_SECRET: ${RUNNER_SECRET:?chybi RUNNER_SECRET}
+      TZ: ${TZ:-Europe/Prague}
+    volumes:
+      - /srv/agenticdev/data/runner:/data
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      forgejo: { condition: service_started }
+
   # ─── Artefakty, transkripty, kontext bundly ──────────────────
   minio:
     <<: [*restart, *logging]
@@ -137,6 +165,11 @@ services:
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?chybi DASHBOARD_TOKEN}
       FORGEJO_URL: http://forgejo:3000
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      # Podpis webhooku z Forgeja. Bez něj control plane webhook odmítne —
+      # nepodepsaný požadavek by dovolil označovat úkoly za hotové komukoli.
+      FORGEJO_HOOK_SECRET: ${FORGEJO_HOOK_SECRET:-}
+      # Adresa, na kterou Forgejo webhook posílá. Uvnitř sítě, ne přes Caddy.
+      CONTROL_PLANE_INTERNAL_URL: http://control-plane:8080
       GIT_SSH_BASE: ssh://git@${VPS_HOST}:2222
       HARNESS_IMAGE: ${HARNESS_IMAGE:-agenticdev/harness:dev}
       AGENTICDEV_DOMAIN: ${AGENTICDEV_DOMAIN:-}

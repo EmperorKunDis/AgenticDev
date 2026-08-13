@@ -15,8 +15,9 @@ die(){ printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
 # shellcheck disable=SC1090
 set -a; . $ENVF; set +a
 
-PROFILE=()
-[[ "${AGENTICDEV_MODE:-tailnet}" == "public" ]] && PROFILE=(--profile public)
+# gate = runner brány před mergem; public = Caddy s doménou
+PROFILE=(--profile gate)
+[[ "${AGENTICDEV_MODE:-tailnet}" == "public" ]] && PROFILE+=(--profile public)
 dc() { (cd "$SRC/vps" && docker compose "${PROFILE[@]}" --env-file "$ENVF" "$@"); }
 
 case "${1:-status}" in

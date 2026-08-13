@@ -104,6 +104,8 @@ jobs:
           FORGEJO_SECRET_KEY=testtesttesttest
           FORGEJO_ROOT_URL=https://test.example.ts.net/git/
           FORGEJO_TOKEN=
+          FORGEJO_HOOK_SECRET=testtesttesttest
+          RUNNER_SECRET=0123456789abcdef0123456789abcdef01234567
           SMTP_HOST=
           SMTP_PORT=587
           SMTP_USER=
@@ -111,8 +113,13 @@ jobs:
           SMTP_FROM=platform@example.com
           MINIO_TAG=RELEASE.2025-04-22T22-12-26Z
           ENV
+          # Profily se ověřují všechny, které umí nasazení zapnout. Pozor:
+          # `config` interpoluje i služby mimo aktivní profil, takže tady
+          # spadne i chybějící proměnná runneru.
           docker compose -f vps/docker-compose.yml --env-file /tmp/test.env \
-            --profile public config > /dev/null
+            --profile gate --profile public config > /dev/null
+          docker compose -f vps/docker-compose.yml --env-file /tmp/test.env \
+            --profile gate config > /dev/null
           echo "✓ compose se přeloží se všemi profily"
 
       - name: Caddyfile must parse

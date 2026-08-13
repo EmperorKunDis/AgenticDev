@@ -224,6 +224,23 @@ control plane. Po každé aktualizaci pusť `agenticdev-ctl smoke`.
 **Kill switch** používej, když se něco děje a nechceš zastavovat celý
 stroj: rozdělaná práce dojede, nové work ordery se přestanou vydávat.
 
+**Brána před mergem.** Runner běží jako služba `runner` v profilu `gate`.
+Nový projekt dostane šablonu workflow do `.forgejo/workflows/test.yml`,
+branch protection na `main` a webhook, kterým se control plane dozví o
+mergi a přepne úkol na `done`. Když panel při zakládání projektu napíše,
+že se branch protection nebo webhook nepovedly, chybí `FORGEJO_TOKEN`
+nebo `FORGEJO_HOOK_SECRET` v `.env`.
+
+```bash
+agenticdev-ctl logs runner    # co runner dělá
+agenticdev-ctl smoke          # sekce "Brána před mergem"
+```
+
+> Runner potřebuje Docker socket, takže je na tomhle stroji rovnocenný
+> rootovi — a běží vedle databáze a podpisového klíče. Kdo umí do repozitáře
+> projektu poslat workflow, umí si přečíst `.env`. U vlastních projektů to
+> je snesitelné; u repozitáře, do kterého píše někdo cizí, ne.
+
 ---
 
 ## 8. Co si po nasazení ověř vlastníma očima

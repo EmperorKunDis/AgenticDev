@@ -356,6 +356,10 @@ if (( FRESH )); then
   # Forgejo bez SECRET_KEY + INSTALL_LOCK nabíhá do instalačního
   # průvodce a `forgejo admin ...` selže na MustInstalled().
   FJ_SECRET=$(gen 80 64)
+  # Podpis webhooku z Forgeja a registrace runneru. Runner secret musí být
+  # 40 hex znaků — forgejo-runner na jiný formát nesedne.
+  FJ_HOOK_SECRET=$(gen 48 40)
+  RUNNER_SECRET=$(openssl rand -hex 20)
 
   ALLOW="registry.npmjs.org,pypi.org,files.pythonhosted.org,codeload.github.com,github.com"
   [[ -n "${PROV_HOST:-}" ]] && ALLOW="$PROV_HOST,$ALLOW"
@@ -406,6 +410,9 @@ FORGEJO_ADMIN_PASSWORD=$FJ_PW
 FORGEJO_SECRET_KEY=$FJ_SECRET
 FORGEJO_ROOT_URL=$FJ_ROOT
 FORGEJO_TOKEN=
+FORGEJO_HOOK_SECRET=$FJ_HOOK_SECRET
+RUNNER_SECRET=$RUNNER_SECRET
+RUNNER_TAG=6
 
 # ─── mail ────────────────────────────────────────────────────
 SMTP_HOST=${SMTP_HOST:-}
@@ -450,6 +457,9 @@ else
   add TS_API_KEY        ""
   add TS_TAILNET        "-"
   add FORGEJO_SECRET_KEY "$(openssl rand -base64 80 | tr -d '\n=+/' | cut -c1-64)"
+  add FORGEJO_HOOK_SECRET "$(openssl rand -base64 48 | tr -d '\n=+/' | cut -c1-40)"
+  add RUNNER_SECRET     "$(openssl rand -hex 20)"
+  add RUNNER_TAG        6
   add LOCAL_MODEL       "local/qwen2.5-coder:32b"
   add CONTROL_PLANE_URL "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo "https://$AGENTICDEV_DOMAIN" || echo "http://$TS_IP:8080")"
   add FORGEJO_ROOT_URL  "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo "https://$AGENTICDEV_DOMAIN/git/" || echo "http://$TS_IP:3000/")"
@@ -479,8 +489,8 @@ set -a; . $ENVF; set +a
 #  6. Start stacku
 # ═══════════════════════════════════════════════════════════════════════
 step "Start služeb"
-PROFILE_ARGS=""
-[[ "$AGENTICDEV_MODE" == "public" ]] && PROFILE_ARGS="--profile public"
+PROFILE_ARGS="--profile gate"
+[[ "$AGENTICDEV_MODE" == "public" ]] && PROFILE_ARGS="$PROFILE_ARGS --profile public"
 # shellcheck disable=SC2086
 dc() { (cd "$SRC/vps" && docker compose $PROFILE_ARGS --env-file $ENVF "$@"); }
 
