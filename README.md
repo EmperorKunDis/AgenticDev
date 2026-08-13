@@ -252,6 +252,38 @@ agent to respect a rule.
 base and phase layers, and chains `AGENTS.md` — but those carry
 instructions, not the boundary. The boundary is the mount.
 
+The same file pins the model for everyone via `enabledModels`, so two people
+on different subscriptions run the same agent and only the bill differs. If
+someone's subscription cannot serve that model, Pi says so and stops — a
+silent substitution would be exactly the kind of degradation this design
+refuses.
+
+## Seeing what happened
+
+There is no metrics stack. What there is, is a record you can read after the
+fact — which is what you need to tune the thing:
+
+| Where | What is in it |
+|---|---|
+| `event` table | append-only, hash-chained audit trail; the database refuses `UPDATE`, `DELETE` and `TRUNCATE` on it |
+| `agent_run` table | one row per run: role, model, duration, outcome, transcript path. Written by the harness when the run ends |
+| `/trees/.transcripts/*.log` | the full transcript of an automated run — every prompt, the agent's output, and the **complete** output of each failed check (the agent's prompt only gets the last 25 lines). Lives in the person's home on the VPS, so pod teardown cannot reach it |
+| Panel → Úkoly → click a task | the timeline: events, runs and decisions merged in order |
+| `git notes` + `Task-Id:` trailer | which session produced a given line — `agenticdev-git who src/a.ts 42` |
+
+Interactive sessions keep their own transcript: Pi writes it to that
+person's `~/.pi/agent`, which survives teardown too. A run with no assigned
+task is not recorded at all — `agent_run.task_id` is `NOT NULL` — and the
+harness says so on screen rather than failing quietly.
+
+## What the three requirements actually rest on
+
+Nothing on a laptop to configure or approve; one git process for the whole
+company, automated for people who don't know git; the same agent for
+everyone regardless of subscription. Which piece of code enforces each of
+those, and the command that proves it on a live instance, is in
+[docs/tri-pozadavky.md](docs/tri-pozadavky.md) (Czech).
+
 ---
 
 ## Where to change things
@@ -289,22 +321,33 @@ same checksum.
 
 Honest status. These are tracked as blockers to 1.0:
 
-- **The merge gate has never run.** A Forgejo Actions runner, a seeded
-  workflow, branch protection and a webhook that sets `done` on merge are
-  all in place, but none of it has been exercised against a live Forgejo —
-  the runner image could not be pulled where this was built. Until you see
-  a red check block a merge, assume the gate is decoration.
-- **No observability stack.** Grafana and Loki are commented out; the harness
-  logs to stdout.
+- **The merge gate has never run against a live Forgejo.** The runner, the
+  seeded workflow, branch protection and the webhook that sets `done` on
+  merge are all in place, and `agenticdev-ctl gate <project>` now measures
+  whether the required commit-status names match the ones Forgejo actually
+  emits — the one thing that cannot be read off the code. Run it on your
+  first PR. Until you see a red check block a merge, assume nothing.
+- **A repository with no tests passes the gate green.** The workflow says so
+  in the log as a warning. An empty gate is not a gate.
+- **No metrics or tracing.** Grafana, Loki, Prometheus and Tempo are
+  commented out in the compose file. What you do get is the ledger, a
+  per-run record, a transcript file per run, and a per-task timeline in the
+  panel — see [Seeing what happened](#seeing-what-happened).
 - **Join tokens never expire** and are per-instance, not per-person.
-- **Token counting is an estimate** (`len/3`), and model prices in `PRICING`
-  are unverified. Dashboard cost figures are indicative only.
+- **Cost is not measured, and the panel says so.** Each run records its
+  model, duration, outcome and transcript, but nothing reports token counts
+  — so `cost_czk` stays 0 and the panel shows "útrata se neměří" rather
+  than `0 Kč`, which would read as free. Wiring real numbers needs usage
+  data out of the harness's model client. (The `len/3` estimate is the
+  context-size budget gate, not spend; there is no `PRICING` table.)
 - **The runner is root-equivalent.** It needs the Docker socket to run
   jobs, and it runs on the same machine as the database and the signing
   key. Anyone who can push a workflow to a project repo can read them.
-- **The orchestration layer (directors) does not exist.** The architecture
-  document describes it; the code does not contain it. The agent works
-  without a state machine.
+- **The orchestration layer (directors) does not exist** in the form the
+  architecture document describes — no signed, separately versioned
+  packages with release channels. What runs is `pod/harness/director.py`:
+  the task's progression is enforced by the project's own checks inside the
+  harness ([ADR-0003](docs/adr/0003-postup-ukolu-vynucuje-harness.md)).
 - **Container escape is out of scope.** The pod drops all capabilities,
   runs non-root, and has no Docker socket — but a container is not a
   hypervisor. Treat it as a strong fence, not a vault.
