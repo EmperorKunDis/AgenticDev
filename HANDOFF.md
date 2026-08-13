@@ -111,7 +111,7 @@ Pořadí, v jakém by se to mělo řešit, je v README v sekci o omezeních.
 ## 5. Drobnosti k dodělání
 
 - [x] `site/index.html` — ID formuláře doplněné, workflow projde
-- [ ] DNS: `CNAME agenticdev → agenticdev-startup-support.github.io.`
+- [ ] DNS: `CNAME agenticdev → praut-startup-support.github.io.` (pozor: jméno účtu, ne produktu — dřív tu stálo `agenticdev-startup-support`, což je účet, který neexistuje)
 - [ ] Settings → Pages → Source: **GitHub Actions**
 - [ ] Settings → Actions → Workflow permissions: **Read and write**
 - [ ] Topics a Website v About na GitHubu

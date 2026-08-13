@@ -30,7 +30,7 @@ U svého DNS poskytovatele přidej záznam:
 ```
 Typ    CNAME
 Jméno  agenticdev
-Cíl    agenticdev-startup-support.github.io.
+Cíl    praut-startup-support.github.io.
 TTL    3600
 ```
 
