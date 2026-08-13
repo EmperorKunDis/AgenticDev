@@ -289,14 +289,19 @@ same checksum.
 
 Honest status. These are tracked as blockers to 1.0:
 
-- **No server-side merge gate.** The agent runs its own tests inside its own
-  pod. Fine for a small trusted team; not sufficient otherwise.
+- **The merge gate has never run.** A Forgejo Actions runner, a seeded
+  workflow, branch protection and a webhook that sets `done` on merge are
+  all in place, but none of it has been exercised against a live Forgejo —
+  the runner image could not be pulled where this was built. Until you see
+  a red check block a merge, assume the gate is decoration.
 - **No observability stack.** Grafana and Loki are commented out; the harness
   logs to stdout.
 - **Join tokens never expire** and are per-instance, not per-person.
 - **Token counting is an estimate** (`len/3`), and model prices in `PRICING`
   are unverified. Dashboard cost figures are indicative only.
-- **CI is not written.** Forgejo Actions is enabled; no workflows exist.
+- **The runner is root-equivalent.** It needs the Docker socket to run
+  jobs, and it runs on the same machine as the database and the signing
+  key. Anyone who can push a workflow to a project repo can read them.
 - **The orchestration layer (directors) does not exist.** The architecture
   document describes it; the code does not contain it. The agent works
   without a state machine.

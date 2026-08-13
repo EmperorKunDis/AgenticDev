@@ -184,6 +184,52 @@ PRD_FILES = {
     "40-decisions/README.md": "# ADR\n\nJeden soubor = jedno rozhodnutí.\n",
 }
 
+# Brána před mergem (ADR-0006). Pouští to runner na VPS, ne agent ve svém
+# podu — o to celé jde. Dokud v repozitáři není co spustit, projde to, ale
+# v logu musí být poznat rozdíl mezi „testy nejsou" a „testy padají",
+# jinak se z prvního stavu stane trvalý.
+TEST_WORKFLOW = """name: test
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Co je v repozitáři ke spuštění
+        id: detect
+        run: |
+          if   [ -f package.json ] && grep -q '"test"' package.json; then echo "kind=node" >> $GITHUB_OUTPUT
+          elif [ -f pyproject.toml ] || [ -f pytest.ini ] || [ -d tests ]; then echo "kind=python" >> $GITHUB_OUTPUT
+          elif [ -f Makefile ] && grep -qE '^test:' Makefile; then echo "kind=make" >> $GITHUB_OUTPUT
+          elif [ -f go.mod ]; then echo "kind=go" >> $GITHUB_OUTPUT
+          else echo "kind=none" >> $GITHUB_OUTPUT
+          fi
+          echo "zjištěno: $(cat $GITHUB_OUTPUT)"
+
+      - name: Testy nejsou
+        if: steps.detect.outputs.kind == 'none'
+        run: |
+          echo "::warning::V repozitáři nejsou žádné testy. Brána projde, ale nic neověřila."
+          echo "Až přidáš testy, začne jejich selhání merge blokovat."
+
+      - name: Testy
+        if: steps.detect.outputs.kind != 'none'
+        run: |
+          set -e
+          case "${{ steps.detect.outputs.kind }}" in
+            node)   npm ci --no-audit --no-fund || npm install --no-audit --no-fund; npm test ;;
+            python) python -m pip install -q -e . 2>/dev/null || true; python -m pytest -q ;;
+            make)   make test ;;
+            go)     go test ./... ;;
+          esac
+"""
+
 
 def _forgejo_create_repo(code: str) -> str | None:
     if not FORGEJO_TOKEN:
@@ -220,20 +266,77 @@ def _forgejo_migrate(code: str, url: str) -> str | None:
     return None
 
 
+def _forgejo_put(owner: str, code: str, path: str, content: str, message: str) -> bool:
+    import base64 as b64
+    try:
+        r = httpx.post(
+            f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/{path}",
+            headers={"Authorization": f"token {FORGEJO_TOKEN}"},
+            json={"content": b64.b64encode(content.encode()).decode(),
+                  "message": message, "branch": "main"},
+            timeout=30)
+        return r.status_code in (200, 201)
+    except Exception:
+        return False
+
+
 def _forgejo_seed_prd(code: str, owner: str = "agenticdev") -> None:
     if not FORGEJO_TOKEN:
         return
-    import base64 as b64
     for path, content in PRD_FILES.items():
-        try:
-            httpx.post(
-                f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/prd/{path}",
-                headers={"Authorization": f"token {FORGEJO_TOKEN}"},
-                json={"content": b64.b64encode(content.encode()).decode(),
-                      "message": f"prd: {path}", "branch": "main"},
-                timeout=30)
-        except Exception:
-            pass
+        _forgejo_put(owner, code, f"prd/{path}", content, f"prd: {path}")
+    # Brána před mergem musí existovat od prvního dne, jinak se na ni
+    # zapomene a testy si dál pouští jen agent sám u sebe.
+    _forgejo_put(owner, code, ".forgejo/workflows/test.yml", TEST_WORKFLOW,
+                 "ci: brána před mergem")
+
+
+def _forgejo_protect_main(owner: str, code: str) -> bool:
+    """
+    Bez tohohle by šlo smergovat i s červenými testy a celá brána by byla
+    jen ozdoba. `enable_status_check` znamená, že merge čeká na workflow.
+    """
+    if not FORGEJO_TOKEN:
+        return False
+    try:
+        r = httpx.post(
+            f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/branch_protections",
+            headers={"Authorization": f"token {FORGEJO_TOKEN}"},
+            json={"branch_name": "main",
+                  "enable_push": False,
+                  "enable_status_check": True,
+                  "status_check_contexts": ["test"],
+                  "block_on_outdated_branch": False,
+                  "required_approvals": 0},
+            timeout=30)
+        return r.status_code in (200, 201, 409)
+    except Exception:
+        return False
+
+
+def _forgejo_add_hook(owner: str, code: str) -> bool:
+    """
+    Webhook, kterým se control plane dozví o mergi — bez něj se úkol nikdy
+    nepřepne na `done` (ADR-0006). Podepisuje se sdíleným tajemstvím,
+    protože nepodepsaný požadavek by komukoli na tailnetu dovolil
+    označovat úkoly za hotové.
+    """
+    secret = os.environ.get("FORGEJO_HOOK_SECRET", "")
+    cp = os.environ.get("CONTROL_PLANE_INTERNAL_URL", "http://control-plane:8080")
+    if not (FORGEJO_TOKEN and secret):
+        return False
+    try:
+        r = httpx.post(
+            f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/hooks",
+            headers={"Authorization": f"token {FORGEJO_TOKEN}"},
+            json={"type": "forgejo", "active": True,
+                  "events": ["pull_request"],
+                  "config": {"url": f"{cp}/v1/hooks/forgejo",
+                             "content_type": "json", "secret": secret}},
+            timeout=30)
+        return r.status_code in (200, 201)
+    except Exception:
+        return False
 
 
 @router.post("/v1/projects")
@@ -245,6 +348,12 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
     else:
         repo = _forgejo_create_repo(code) or f"{GIT_SSH}/agenticdev/{code}.git"
         _forgejo_seed_prd(code)
+
+    # Majitele bereme z adresy, kterou Forgejo vrátilo — token nemusí patřit
+    # uživateli `agenticdev`.
+    owner = (re.search(r"/([^/]+)/[^/]+?(?:\.git)?$", repo) or [None, "agenticdev"])[1]
+    gate = _forgejo_protect_main(owner, code)
+    hook = _forgejo_add_hook(owner, code)
 
     with db() as c:
         client = c.execute("SELECT * FROM client WHERE name = %s", (p.client_name,)).fetchone()
@@ -270,9 +379,16 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
                 (proj["id"], kind, i, kind == "implementation"))
         _emit(c, None, "project", str(proj["id"]), "created", {"code": code}, code)
 
+    notes = [f"Vyplň prd/{code}/50-glossary.md, pak založ první úkol."]
+    if not gate:
+        notes.append("Branch protection se nenastavila — merge zatím nic nebrání.")
+    if not hook:
+        notes.append("Webhook nevznikl — úkol se po mergi nepřepne na hotovo.")
+
     return {"project": proj, "repo_url": repo,
             "prd_seeded": bool(FORGEJO_TOKEN),
-            "next": f"Vyplň prd/{code}/50-glossary.md, pak založ první úkol."}
+            "merge_gate": gate, "webhook": hook,
+            "next": " ".join(notes)}
 
 
 @router.get("/v1/projects")

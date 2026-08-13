@@ -230,29 +230,30 @@ cmd_finish() {
 
   cmd_sync || die "Vyřeš konflikty a spusť finish znovu."
 
-  info "odesílám"
-  git push --quiet -u origin "$branch" --force-with-lease || die "push selhal"
-  ok "větev odeslána: $branch"
-  git push --quiet origin "$NOTES_REF" 2>/dev/null || true
+  # Odsud dál to není práce podu. Síťový git a zakládání PR dělá hostitel:
+  # agent nemá přístup k repozitáři ani token do Forgeja, a to je záměr —
+  # kdyby je měl, přestalo by platit to, co o platformě tvrdíme.
+  #
+  # Necháme tu jen vzkaz. Launcher ho po ukončení podu najde, větev odešle
+  # a požádá control plane, ať otevře PR.
+  local tid=""
+  [[ -f .agenticdev/task.json ]] && tid=$(python3 -c \
+    'import json;print(json.load(open(".agenticdev/task.json")).get("task_id",""))' \
+    2>/dev/null || true)
 
-  # PR přes Forgejo API
-  if [[ -n "${AGENTICDEV_FORGEJO_URL:-}" && -n "${AGENTICDEV_FORGEJO_TOKEN:-}" && -n "${AGENTICDEV_REPO:-}" ]]; then
-    local body; body="Session: \`$SESSION\`
+  local subjects; subjects=$(git log --format='- %s' "origin/$MAIN_BRANCH..HEAD" 2>/dev/null || true)
+  # Tělo jde argumentem, ne rourou: stdin patří heredocu se skriptem.
+  python3 - "$branch" "$MAIN_BRANCH" "${title:-$branch}" "$tid" "$SESSION" "$subjects" \
+    > .agenticdev/finished <<'PYJSON'
+import json, sys
+branch, base, title, task_id, session, body = sys.argv[1:7]
+json.dump({"branch": branch, "base": base, "title": title,
+           "task_id": task_id, "session": session, "body": body},
+          sys.stdout, ensure_ascii=False, indent=2)
+PYJSON
 
-$(git log --format='- %s' "origin/$MAIN_BRANCH..HEAD")"
-    local r; r=$(curl -fsS -X POST \
-      "$AGENTICDEV_FORGEJO_URL/api/v1/repos/$AGENTICDEV_REPO/pulls" \
-      -H "Authorization: token $AGENTICDEV_FORGEJO_TOKEN" \
-      -H 'content-type: application/json' \
-      -d "$(python3 -c "
-import json,sys
-print(json.dumps({'head':'$branch','base':'$MAIN_BRANCH',
-                  'title':'''${title:-$branch}''','body':sys.stdin.read()}))" <<<"$body")" 2>/dev/null) \
-      && ok "PR: $(echo "$r" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("html_url",""))' 2>/dev/null)" \
-      || warn "PR se nepodařilo založit (možná už existuje)"
-  else
-    ok "odesláno — PR otevři ručně"
-  fi
+  ok "hotovo — připraveno k odeslání"
+  info "větev $branch odešle a PR otevře launcher, až pod skončí"
 }
 
 # ═══════════════════════════════════════════════════════════════

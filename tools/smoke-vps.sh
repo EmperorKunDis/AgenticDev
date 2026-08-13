@@ -32,8 +32,8 @@ set -a; . "$ENVF"; set +a
 
 CP="${CONTROL_PLANE_URL:-http://${VPS_HOST}:8080}"
 API="http://${VPS_HOST}:8080"          # napřímo, bez Caddy
-PROFILE=()
-[[ "${AGENTICDEV_MODE:-tailnet}" == "public" ]] && PROFILE=(--profile public)
+PROFILE=(--profile gate)
+[[ "${AGENTICDEV_MODE:-tailnet}" == "public" ]] && PROFILE+=(--profile public)
 dc() { (cd "$SRC/vps" && docker compose "${PROFILE[@]}" --env-file "$ENVF" "$@"); }
 psqlq() { dc exec -T postgres psql -qtAX -U agenticdev -d agenticdev -c "$1" 2>&1; }
 jqr() { python3 -c "import json,sys;d=json.load(sys.stdin);print(eval('d'+sys.argv[1]))" "$1" 2>/dev/null; }
@@ -269,6 +269,25 @@ print(f\"{a.get('name','')}|{a.get('email','')}\")" 2>/dev/null)
   fi
 else
   warn "bez tokenu stanice workspace nezkusím"
+fi
+
+# ═══ 8a. Brána před mergem ═════════════════════════════════════
+hdr "Brána před mergem"
+st=$(dc ps --format '{{.Service}} {{.State}}' 2>/dev/null | awk '$1=="runner"{print $2}')
+[[ "$st" == "running" ]] && ok "runner běží" \
+  || warn "runner není running (${st:-chybí}) — workflow projektů nemá kdo spustit"
+
+if [[ -n "${FORGEJO_HOOK_SECRET:-}" ]]; then
+  ok "podpis webhooku je nastavený"
+  # Nepodepsaný požadavek musí odletět: jinak by kdokoli na tailnetu mohl
+  # označovat úkoly za hotové.
+  code=$(curl -sS --max-time 10 -o /dev/null -w "%{http_code}" -X POST "$API/v1/hooks/forgejo" \
+         -H 'content-type: application/json' -d '{"action":"closed"}' 2>/dev/null)
+  [[ "$code" == "401" ]] && ok "webhook bez podpisu odmítnut (401)" \
+    || bad "webhook bez podpisu vrátil $code — kdokoli může označit úkol za hotový"
+else
+  bad "FORGEJO_HOOK_SECRET chybí — úkol se po mergi nepřepne na hotovo"
+  info "doplň ho do .env a spusť: agenticdev-ctl restart control-plane"
 fi
 
 # ═══ 8b. Pody se pouští na VPS ═════════════════════════════════

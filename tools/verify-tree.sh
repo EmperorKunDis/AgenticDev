@@ -12,7 +12,8 @@ for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/a
          control-plane/app/admin.py control-plane/app/workspace.py \
          control-plane/app/dashboard.html control-plane/app/enroll.py \
          control-plane/app/join.html control-plane/app/settings.py \
-         control-plane/app/migrate.py control-plane/app/ratelimit.py; do chk "$f" "$f"; done
+         control-plane/app/migrate.py control-plane/app/ratelimit.py \
+         control-plane/app/hooks.py; do chk "$f" "$f"; done
 
 echo "── workspace (Pi) ──"
 chk workspace/_base/AGENTS.md               "AGENTS.md"
