@@ -5,7 +5,7 @@
 #  Jeden soubor. Nese v sobě celý repozitář platformy.
 #
 #      scp agenticdev-install-vps.sh root@<vps>:/root/
-#      ssh root@<vps> 'bash /root/agenticdev-install-vps.sh'
+#      ssh -t root@<vps> 'bash /root/agenticdev-install-vps.sh'
 #
 #  Po dokončení najdeš v /srv/agenticdev/out/ druhý instalátor —
 #  agenticdev-install-mac.sh — svázaný právě s tímhle VPS.
@@ -46,6 +46,17 @@ esac; done
 [[ -r "$SELF" ]] || die "Instalátor musí být SOUBOR na disku — přes 'curl | bash' se nerozbalí.
    Stáhni ho a spusť:  bash agenticdev-install-vps.sh"
 
+# Otázky níž čtou z /dev/tty. Přes 'ssh host cmd' bez -t se na vzdálené
+# straně nealoguje pseudoterminál, takže /dev/tty pro proces neexistuje —
+# open() spadne na ENXIO ("No such device or address") na první otázce.
+# Radši to řekneme rovnou, než ať to vypadá jako rozbitý instalátor.
+if (( ! MODE_CHECK && ! MODE_YES )) && ! { true </dev/tty; } 2>/dev/null; then
+  die "Bez terminálu se nedá odpovídat na otázky (chybí /dev/tty).
+   Přes ssh spouštěj s -t, ať se terminál navážou:
+     ssh -t root@<vps> 'bash /root/agenticdev-install-vps.sh'
+   Nebo běž neinteraktivně:  bash $SELF --yes  (hodnoty vezme z prostředí/.env)"
+fi
+
 ask() {  # ask <proměnná> <otázka> <default>
   local __v=$1 __q=$2 __d=${3:-} __r
   if (( MODE_YES )); then printf -v "$__v" '%s' "${!__v:-$__d}"; return; fi
@@ -66,9 +77,10 @@ askpw() { # askpw <proměnná> <otázka> <min-délka>
     return
   fi
   while :; do
-    read -rsp "  $__q (min $__min znaků): " __a </dev/tty; echo
+    read -rsp "  $__q (doporučeno min $__min znaků): " __a </dev/tty; echo
     if [[ ${#__a} -lt $__min ]]; then
-      printf "${YLW}    krátké — zkus znovu${OFF}\n"; continue
+      read -rp "${YLW}    kratší, než se doporučuje — trvat na tom? [a/N] ${OFF}" __ok </dev/tty
+      [[ "$__ok" =~ ^[aAyY]$ ]] || continue
     fi
     read -rsp "  ještě jednou: " __b </dev/tty; echo
     [[ "$__a" == "$__b" ]] && break
@@ -181,6 +193,16 @@ else
   info "Doménu nech prázdnou, jestli VPS nemá veřejné DNS."
   info "Platforma pak pojede jen po tailnetu."
   ask DOMAIN "Doména platformy (Enter = jen tailnet)" ""
+  if [[ "$DOMAIN" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
+    # Let's Encrypt nevydá certifikát na holou IP adresu, ať už do compose
+    # napíšeš cokoli — CA k tomu potřebuje jméno. sslip.io je veřejná DNS
+    # služba zdarma: <ip>.sslip.io se přeloží zpátky přesně na <ip>, nic se
+    # nekupuje ani neregistruje. Adresa, kterou jsi zadal, zůstává funkční
+    # cesta k tomuhle VPS — jen dostane jméno, které certifikát unese.
+    RAW_IP="$DOMAIN"; DOMAIN="$RAW_IP.sslip.io"
+    warn "$RAW_IP je IP adresa — na tu certifikát nejde vydat"
+    info "beru $DOMAIN — sslip.io ji jen přeloží zpátky na $RAW_IP, nic víc"
+  fi
   # Kdo instaluje, se musí podepsat. Není to formalita: z tohohle jména
   # vzniká `principal`, a bez něj má auditní stopa u všeho, co se odklikne
   # v panelu, prázdného aktéra — tedy nevíš, kdo co schválil.
@@ -198,23 +220,14 @@ else
   askpw ADMIN_PW  "Heslo do admin panelu" 12
   askpw ENROLL_PW "Heslo pro připojení strojů" 10
 
-  echo
-  info "Dodavatel modelů — nastavuje DEFAULT_MODEL i egress allowlist."
-  info "  1) OpenAI-kompatibilní  (OpenAI, OpenRouter, Groq, vLLM…)"
-  info "  2) Anthropic"
-  info "  3) lokálně přes Ollama  (bez cloudu, bez klíče)"
-  ask PROVIDER "Volba" "1"
-  case "$PROVIDER" in
-    2) MODEL_BACKEND=anthropic; MODEL_BASE_URL=https://api.anthropic.com/v1
-       DEFAULT_MODEL=claude-sonnet-5; PROV_HOST=api.anthropic.com ;;
-    3) MODEL_BACKEND=ollama;    MODEL_BASE_URL=http://host.docker.internal:11434
-       DEFAULT_MODEL=local/qwen2.5-coder:32b; PROV_HOST="" ;;
-    *) MODEL_BACKEND=openai;    MODEL_BASE_URL=https://api.openai.com/v1
-       DEFAULT_MODEL=gpt-5.5;   PROV_HOST=api.openai.com ;;
-  esac
-  if [[ -n "$PROV_HOST" ]]; then
-    asks MODEL_KEY "API klíč (Enter = doplním potom do .env)"
-  fi
+  # Dodavatel modelů, API klíč, DEFAULT_MODEL i EGRESS_ALLOWLIST jsou
+  # DB-backed nastavení (viz control-plane/app/settings.py EDITABLE) —
+  # panel je mění za běhu, bez restartu. Ptát se na to teď, uprostřed
+  # instalace, kdy člověk často nemá klíč po ruce, je zbytečná zábrana
+  # navíc. Necháme rozumný výchozí stav a dotaz přesuneme tam, kde se dá
+  # kdykoli beztrestně změnit: Nastavení → Modely v panelu.
+  MODEL_BACKEND=openai; MODEL_BASE_URL=https://api.openai.com/v1
+  DEFAULT_MODEL=gpt-5.5; MODEL_KEY=""
 
   ask SMTP_HOST "SMTP host (Enter = přeskočit maily)" ""
   if [[ -n "${SMTP_HOST:-}" ]]; then
@@ -410,6 +423,12 @@ dpkg-reconfigure -f noninteractive unattended-upgrades >>"$LOG" 2>&1 || true
 if (( FRESH )); then
   step "Generuji tajemství"
   gen() { openssl rand -base64 "${1:-32}" | tr -d '\n=+/' | cut -c1-"${2:-32}"; }
+  # .env níž se čte trojím způsobem: sourcuje ho bash ("set -a; . .env"),
+  # parsuje ho docker compose (--env-file) a čte ho python-dotenv stylem.
+  # Cokoli, co napsal člověk — jméno, e-mail, heslo — může mít mezeru, $
+  # nebo zpětný apostrof. Bez uzavření do '…' by bash při sourcování na
+  # mezeře spadl ("command not found") nebo na $ tiše uřízl hodnotu.
+  envq() { printf '%s' "$1" | sed "s/'/'\\\\''/g"; }
 
   TMPK=$(mktemp -d); chmod 700 "$TMPK"
   openssl genpkey -algorithm ED25519 -out "$TMPK/wo.pem" 2>>"$LOG" \
@@ -450,8 +469,8 @@ if (( FRESH )); then
 # ═══════════════════════════════════════════════════════════════
 AGENTICDEV_INSTANCE_ID=$INSTANCE_ID
 AGENTICDEV_MODE=$AGENTICDEV_MODE
-AGENTICDEV_DOMAIN=$DOMAIN
-CONTROL_PLANE_URL=$CP_URL
+AGENTICDEV_DOMAIN='$(envq "$DOMAIN")'
+CONTROL_PLANE_URL='$(envq "$CP_URL")'
 VPS_HOST=$TS_IP
 # tailscale = vnitřní služby na tailnetu, přihlášení dělá tailnet
 # domain    = vnitřní služby na 127.0.0.1, přihlášení obyčejným SSH klíčem
@@ -462,11 +481,11 @@ BIND_ADDR=$TS_IP
 TZ=Europe/Prague
 
 # ─── admin ───────────────────────────────────────────────────
-# Kdo tuhle instanci spravuje. Zakládá se z toho `principal`, aby u
+# Kdo tuhle instanci spravuje. Zakládá se z toho \`principal\`, aby u
 # rozhodnutí odklikaného v panelu bylo v auditní stopě vidět kdo — dřív
 # tam byl actor prázdný.
-ADMIN_NAME=$ADMIN_NAME
-ADMIN_EMAIL=$ADMIN_EMAIL
+ADMIN_NAME='$(envq "$ADMIN_NAME")'
+ADMIN_EMAIL='$(envq "$ADMIN_EMAIL")'
 
 # ─── tajemství ───────────────────────────────────────────────
 POSTGRES_PASSWORD=$PG_PW
@@ -475,8 +494,8 @@ JWT_SECRET=$JWT
 WO_SIGNING_KEY_B64=$WO_PRIV
 WO_VERIFY_KEY_B64=$WO_PUB
 JOIN_TOKEN=$JOIN_TOKEN
-DASHBOARD_TOKEN=$ADMIN_PW
-ENROLL_PASSWORD=$ENROLL_PW
+DASHBOARD_TOKEN='$(envq "$ADMIN_PW")'
+ENROLL_PASSWORD='$(envq "$ENROLL_PW")'
 LEASE_HOURS=4
 
 # ─── veřejná registrace přes Tailscale Funnel ────────────────────────
@@ -487,27 +506,27 @@ TS_API_KEY=
 TS_TAILNET=-
 
 # ─── Forgejo ─────────────────────────────────────────────────
-FORGEJO_ADMIN_USER=$ADMIN_USER
-FORGEJO_ADMIN_EMAIL=$ADMIN_EMAIL
+FORGEJO_ADMIN_USER='$(envq "$ADMIN_USER")'
+FORGEJO_ADMIN_EMAIL='$(envq "$ADMIN_EMAIL")'
 FORGEJO_ADMIN_PASSWORD=$FJ_PW
 FORGEJO_SECRET_KEY=$FJ_SECRET
-FORGEJO_ROOT_URL=$FJ_ROOT
+FORGEJO_ROOT_URL='$(envq "$FJ_ROOT")'
 FORGEJO_TOKEN=
 FORGEJO_HOOK_SECRET=$FJ_HOOK_SECRET
 RUNNER_SECRET=$RUNNER_SECRET
 RUNNER_TAG=6
 
 # ─── mail ────────────────────────────────────────────────────
-SMTP_HOST=${SMTP_HOST:-}
+SMTP_HOST='$(envq "${SMTP_HOST:-}")'
 SMTP_PORT=587
-SMTP_USER=${SMTP_USER:-}
-SMTP_PASSWORD=${SMTP_PASS:-}
-SMTP_FROM=${ADMIN_EMAIL}
+SMTP_USER='$(envq "${SMTP_USER:-}")'
+SMTP_PASSWORD='$(envq "${SMTP_PASS:-}")'
+SMTP_FROM='$(envq "$ADMIN_EMAIL")'
 
 # ─── modely ──────────────────────────────────────────────────
 MODEL_BACKEND=$MODEL_BACKEND
 MODEL_BASE_URL=$MODEL_BASE_URL
-MODEL_API_KEY=${MODEL_KEY:-}
+MODEL_API_KEY='$(envq "${MODEL_KEY:-}")'
 DEFAULT_MODEL=$DEFAULT_MODEL
 LOCAL_MODEL=local/qwen2.5-coder:32b
 MODEL_MAX_TOKENS=8000
@@ -847,8 +866,8 @@ cat <<EOF
   Obsluha:             agenticdev-ctl status | logs | mac | backup-now${OFF}
 
 EOF
-[[ -z "${MODEL_API_KEY:-}" ]] && \
-  warn "MODEL_API_KEY je prázdný — doplň ho do $ENVF a pusť: agenticdev-ctl restart control-plane"
+[[ -z "${MODEL_KEY:-}" ]] && \
+  warn "dodavatele modelu a API klíč zatím nemáš — nastav je v panelu: Nastavení → Modely (platí okamžitě, bez restartu)"
 [[ "$AGENTICDEV_MODE" == "tailnet" ]] && \
   info "Bez domény jede platforma jen po tailnetu. Doménu doplníš do $ENVF (AGENTICDEV_DOMAIN, AGENTICDEV_MODE=public) a pustíš 'agenticdev-ctl up'."
 
