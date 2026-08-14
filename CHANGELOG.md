@@ -11,6 +11,40 @@ i v minor verzi — dokud platí *alpha* v README, ber to tak.
 
 _Zatím nic._
 
+## [0.2.1] — 2026-08-14
+
+### Opraveno
+
+Všechno nahlášené při prvním ostrém běhu instalace na skutečném VPS.
+
+- **Instalace přes `ssh` bez `-t` spadla na první otázce.** `ask`/`asks`/`askpw`
+  čtou z `/dev/tty`, který bez alokace pseudoterminálu na vzdálené straně
+  neexistuje. Dokumentace (README, README.cs, DEPLOY, hlavička
+  `install-vps.sh`, release notes, web) teď všude používá `ssh -t`, a
+  instalátor navíc bez terminálu a bez `--yes` skončí rovnou srozumitelnou
+  hláškou místo `No such device or address` uprostřed instalace.
+- **Jméno správce se dvěma slovy shodilo `.env`.** Ten se sourcuje jako bash
+  (`set -a; . .env; set +a`), takže `ADMIN_NAME=Martin Svanda` bez uvozovek
+  skončilo jako „Svanda: command not found". Stejná třída chyby hrozila u
+  hesel a SMTP údajů s `$` nebo zpětným apostrofem. Volná pole se teď do
+  `.env` zapisují bezpečně uvozovkovaná.
+- **Komentář u `principal` v `.env` obsahoval nechráněné zpětné apostrofy**
+  uvnitř needitovaného heredoc, což při každé čerstvé instalaci vypsalo
+  `principal: command not found`.
+- **Minimální délka hesla byla tvrdá smyčka bez úniku.** Kdo chtěl kratší
+  heslo, neměl jak pokračovat. Teď je to doporučení s explicitním
+  potvrzením ("trvat na tom?").
+- **Dotaz na dodavatele modelů uprostřed instalace byl zbytečný.**
+  `MODEL_BACKEND`, `MODEL_API_KEY`, `DEFAULT_MODEL` i `EGRESS_ALLOWLIST`
+  jsou nastavení v databázi, panel je mění za běhu bez restartu — API klíč
+  se ostatně už dal přeskočit. Otázka odpadá, instalace nastaví rozumný
+  výchozí stav a na konci ukáže, že se dodavatel nastavuje v panelu.
+- **Doména zadaná jako holá IP adresa prošla falešně zeleně** (DNS kontrola
+  na IP vrátí tu samou IP) a certifikát by se nikdy nevydal — Let's Encrypt
+  na holou IP nejde. IP se teď detekuje a automaticky přepíše na
+  `<ip>.sslip.io`, což je pořád táž adresa, jen se jménem, které certifikát
+  unese.
+
 ## [0.2.0] — 2026-08-14
 
 ### Přidáno
@@ -83,6 +117,7 @@ co je výš, včetně oprav, které jsou pro provoz podstatné.
 - Klienti pro macOS, Linux a Windows; registrace přes veřejnou stránku
 - Reprodukovatelný build instalačního artefaktu
 
-[Nevydáno]: https://github.com/Praut-Startup-Support/AgenticDev/compare/v0.2.0...HEAD
+[Nevydáno]: https://github.com/Praut-Startup-Support/AgenticDev/compare/v0.2.1...HEAD
+[0.2.1]: https://github.com/Praut-Startup-Support/AgenticDev/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Praut-Startup-Support/AgenticDev/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Praut-Startup-Support/AgenticDev/releases/tag/v0.1.0
