@@ -99,8 +99,10 @@ def list_for_workstation(ws: dict = Depends(current_ws)):
                         WHERE ph.project_id = p.id AND t.state = 'ready') AS ready_tasks
                FROM project p
                LEFT JOIN client cl ON cl.id = p.client_id
-               WHERE p.active
+               JOIN project_member pm ON pm.project_id=p.id
+               WHERE p.active AND pm.active AND pm.principal_id=%s
                ORDER BY p.code"""
+            , (ws["principal_id"],)
         ).fetchall()
     return {"projects": rows}
 
@@ -116,7 +118,9 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
             """SELECT p.*, cl.name AS client_name,
                       (SELECT kind FROM phase WHERE project_id = p.id AND active LIMIT 1) AS phase
                FROM project p LEFT JOIN client cl ON cl.id = p.client_id
-               WHERE p.code = %s AND p.active""", (code,)).fetchone()
+               JOIN project_member pm ON pm.project_id=p.id
+               WHERE p.code = %s AND p.active AND pm.active AND pm.principal_id=%s""",
+            (code, ws["principal_id"])).fetchone()
         if not proj:
             raise HTTPException(404, f"projekt '{code}' neexistuje nebo není aktivní")
 

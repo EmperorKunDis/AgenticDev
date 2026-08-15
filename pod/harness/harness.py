@@ -2,9 +2,9 @@
 """
 Harness — důvěryhodné jádro podu.
 
-Jediná cesta, jak se v podu spustí agent. Ověří policy a teprve pak ho
-pustí. Launcher harness startuje po tom, co vloží policy na tmpfs
-kontejneru; sám kontejner do té doby jen čeká (viz compose). Obraz má
+Jediná cesta, jak se v podu spustí agent. Zpracuje přesný Work Order, který
+ověřil privileged broker, a teprve pak agenta pustí. Broker vloží dokument na
+tmpfs; sám kontejner do té doby jen čeká. Obraz má
 harness i v ENTRYPOINT, aby `docker run` nad tímhle obrazem nikdy
 nespustil agenta bez kontroly.
 
@@ -23,12 +23,13 @@ Co vynucuje a co ne:
   nevynucuje nikdo     co agent udělá s daty, ke kterým má legitimní
                        přístup. To je hranice návrhu, ne chyba.
 
-Nekontroluje se tu nic, co už zajistil launcher — kdyby harness "ověřoval"
+Nekontroluje se tu nic, co už zajistil broker — kdyby harness "ověřoval"
 mounty, které si sám nenastavil, byla by to jen dekorace.
 """
 from __future__ import annotations
 
 import json
+from datetime import datetime
 import os
 import pathlib
 import shutil
@@ -37,7 +38,7 @@ import subprocess
 import sys
 import time
 
-POLICY = pathlib.Path("/run/agenticdev/policy.json")
+POLICY = pathlib.Path("/run/agenticdev/work-order.json")
 WORKSPACE = pathlib.Path("/workspace")
 TOKEN = pathlib.Path("/run/agenticdev/token")
 
@@ -69,18 +70,25 @@ def note(msg: str) -> None:
 # ═══════════════════════════════════════════════════════════════
 def load_policy() -> dict:
     if not POLICY.is_file():
-        fail("Chybí policy. Pod se nesmí spustit bez ní.")
+        fail("Chybí immutable Work Order. Pod se nesmí spustit bez něj.")
     try:
-        p = json.loads(POLICY.read_text())
+        signed = json.loads(POLICY.read_text())
     except json.JSONDecodeError as e:
-        fail(f"Policy je poškozená: {e}")
-
-    # `model` tu záměrně není. Model si vybírá člověk ve svém přihlášení k
-    # Pi a umí ho přepnout za běhu, takže policy ho nemusí znát — hranicí
-    # je egress, ne jméno. Viz ADR-0004.
+        fail(f"Work Order je poškozený: {e}")
+    if signed.get("schema") != "agenticdev.work-order/v1" or not signed.get("signature"):
+        fail("Work Order nemá očekávané schéma nebo podpis.")
+    task, repo, policy = signed.get("task", {}), signed.get("repo", {}), signed.get("policy", {})
+    p = {"project": task.get("project"), "phase": task.get("phase"),
+         "data_class": task.get("data_class"), "scope": repo.get("write_scope", []),
+         "egress": policy.get("egress_allowlist", []), "budget_tokens": policy.get("budget_tokens"),
+         "deadline_ts": int(datetime.fromisoformat(signed["expires_at"]).timestamp()),
+         "work_order_id": signed.get("work_order_id"), "task": task,
+         "max_loop_iterations": policy.get("max_loop_iterations"),
+         "human_gate": policy.get("human_gate", []),
+         "model_allowlist": policy.get("model_allowlist", [])}
     for key in ("project", "phase", "data_class", "scope", "egress"):
-        if key not in p:
-            fail(f"Policy nemá povinné pole '{key}'.")
+        if p.get(key) is None:
+            fail(f"Work Order nemá povinné pole '{key}'.")
     return p
 
 
