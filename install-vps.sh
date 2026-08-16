@@ -146,9 +146,11 @@ fi
 
 install -d -m 0750 $ROOT $ROOT/config $ROOT/data $ROOT/backup $ROOT/out
 install -d -m 0750 $ROOT/data/{postgres,forgejo,minio,caddy,directors}
+install -d -o 1000 -g 1000 -m 0750 "$ROOT/data/runner"
 # Forgejo běží v kontejneru pod uid 1000. Bez tohohle nepřečte vlastní
 # app.ini ("permission denied") a skončí v restart-loopu.
 chown -R 1000:1000 $ROOT/data/forgejo
+chown -R 1000:1000 "$ROOT/data/runner"
 : >"$LOG"; chmod 600 "$LOG"
 
 # zdroj: nahradíme jen soubory platformy, data a config zůstávají
