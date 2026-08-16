@@ -391,7 +391,7 @@ Honest status. These are tracked as blockers to 1.0:
   than `0 Kč`, which would read as free. Wiring real numbers needs usage
   data out of the harness's model client. (The `len/3` estimate is the
   context-size budget gate, not spend; there is no `PRICING` table.)
-- **The isolated runner needs live proof.** Actions use a dedicated rootless
+- **The isolated runner needs live proof.** Actions use a dedicated
   Docker-in-Docker daemon and never receive the host Docker socket. The
   isolation and fail-closed merge behavior still need adversarial validation
   on a disposable VPS.

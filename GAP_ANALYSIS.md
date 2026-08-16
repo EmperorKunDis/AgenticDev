@@ -216,7 +216,7 @@ obě varianty.
    později doplnit jednorázové enrollment credentials a offboarding.
 3. Podepsaný Work Order a immutable runtime template jsou implementovány;
    produkční přijetí blokuje živý end-to-end důkaz.
-4. Živě ověřit implementovaný rootless merge runner bez host Docker socketu,
+4. Živě ověřit implementovaný izolovaný merge runner bez host Docker socketu,
    fail-closed workflow a approval ≥ 1.
 5. Živě ověřit implementovaný jednorázový Ed25519 proof-of-possession protokol
    a obě režimové TLS konfigurace.
@@ -245,6 +245,6 @@ Zdrojový strom již uživateli Docker oprávnění nedává, ale bez live upgra
 nelze potvrdit odstranění starých supplementary groups ani práva socketů.
 Broker-owned Git, PTY a lifecycle jsou implementované, ne však live-proven.
 XFS project quota a skutečné vyčerpání limitů musí být ověřeny acceptance
-runem. Forgejo runner nyní používá samostatný rootless daemon bez host Docker
+runem. Forgejo runner nyní používá samostatný Docker-in-Docker daemon bez host Docker
 socketu, ale jeho izolace ještě není live-proven. Ostatní readiness mezery z
 této matice zůstávají. P0 proto není produkčně ready.

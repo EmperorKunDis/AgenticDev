@@ -70,7 +70,7 @@ se kód parsuje:
 - Automatický enrollment je collision-safe a device auth používá jednorázový Ed25519 proof-of-possession
 - Nativní Claude/Codex adaptéry, provider profily a obnovitelné AUTH_REQUIRED/RATE_LIMITED stavy jsou implementované
 - Commit-pinned repository analysis, otázky, lidské schválení a mutační gate jsou implementované
-- Forgejo runner nepoužívá host Docker socket; joby obsluhuje samostatný rootless daemon
+- Forgejo runner nepoužívá host Docker socket; joby obsluhuje samostatný izolovaný Docker-in-Docker daemon
 
 ---
 
