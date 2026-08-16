@@ -116,7 +116,7 @@ class Broker:
    if action=="probe":
     if w["state"]!="RUNNING":raise Reject("workload_not_running")
     try:
-     acct=self.account_lookup(w["unix_user"]); out=subprocess.run(["docker","exec","--user",f"{acct.pw_uid}:{acct.pw_gid}",w["container"],"python3","/opt/agenticdev/runtime_probe.py"],check=True,capture_output=True,text=True,timeout=120)
+     acct=self.account_lookup(w["unix_user"]); out=subprocess.run(["docker","exec","--user",f"{acct.pw_uid}:{acct.pw_gid}",w["container"],"python3","/opt/agenticdev/runtime_probe.py"],check=False,capture_output=True,text=True,timeout=120)
      return {"ok":True,"work_order_id":w["id"],"probe":json.loads(out.stdout)}
     except Exception as e:raise Reject("runtime_probe_failed") from e
    if action=="attach":
@@ -154,7 +154,7 @@ class Broker:
   if w["state"]!="STOPPING":self.state.transition(w["id"],{w["state"]},"STOPPING"); self.audit("stop",w["manifest"],reason,user,"STOPPING")
   published=True
   try:
-   self._publish(w)
+   if w["manifest"]["runtime"].get("mode")!="analysis":self._publish(w)
   except Reject:published=False
   try:self._run_cleanup(w)
   except Reject:
@@ -186,7 +186,10 @@ class Broker:
   s,t,rt=m["subject"],m["task"],m["runtime"]
   if not all(ID.fullmatch(str(s.get(k,''))) for k in ("principal_id","workstation_id")) or s.get("unix_user")!=user:raise Reject("wrong_user")
   if not ID.fullmatch(str(t.get("id",''))) or not PROJECT.fullmatch(str(t.get("project",''))):raise Reject("invalid_task")
-  if rt.get("template") not in TEMPLATES or set(rt)!={"template","limits"}:raise Reject("runtime_template_denied")
+  if rt.get("template") not in TEMPLATES or set(rt)!={"template","provider","mode","limits"}:raise Reject("runtime_template_denied")
+  if rt.get("provider") not in {"claude","codex"}:raise Reject("provider_denied")
+  if rt.get("mode") not in {"analysis","work"}:raise Reject("runtime_mode_denied")
+  if rt.get("mode")=="analysis" and m["repo"].get("write_scope"):raise Reject("analysis_write_scope_denied")
   self._limits(rt.get("limits"))
   if any(k in m for k in ("host_path","mounts","image","command","environment","network","docker_flags")):raise Reject("forbidden_runtime_input")
  @staticmethod
@@ -241,9 +244,15 @@ class Broker:
     if json.loads(marker.read_text())!=identity or not (work/".git").exists():raise Reject("worktree_identity_mismatch")
    else:
     if any(work.iterdir()):raise Reject("worktree_not_empty")
-    self.git_runner(["git","clone","--shared","--no-checkout","--",str(mirror),str(work)])
+    # Checkout se mountuje do podu bez hostitelského mirroru. `--shared` by
+    # vytvořilo absolute alternates path do /srv, takže Git uvnitř podu
+    # nedokáže načíst ani HEAD.
+    self.git_runner(["git","clone","--no-hardlinks","--no-checkout","--",str(mirror),str(work)])
     self.git_runner(["git","-C",str(work),"checkout","-B",branch,m["repo"].get("base_ref","main")])
-   marker.write_text(json.dumps(identity,sort_keys=True)); os.chmod(marker,0o400)
+    marker.write_text(json.dumps(identity,sort_keys=True)); os.chmod(marker,0o400)
+   # Provisioning čte z root-owned mirroru, ale hotovou větev musí pushnout
+   # do Forgeja. URL pochází výhradně z online autorizace serveru.
+   self.git_runner(["git","-C",str(work),"remote","set-url","origin",a["repo_url"]])
   bundle=self._get(f"/v1/workspace/{project}/bundle",token)
   if bundle.get("project",{}).get("code")!=project or bundle.get("project",{}).get("phase")!=m["task"]["phase"]:raise Reject("workspace_bundle_mismatch")
   author=bundle.get("author") or {}
@@ -255,9 +264,17 @@ class Broker:
   for rel,content in (bundle.get("files") or {}).items():
    path=Path(rel)
    if path.is_absolute() or '..' in path.parts or path.parts[0]=='.git':raise Reject("unsafe_workspace_file")
+   parent=work
+   for part in path.parts[:-1]:
+    candidate=parent/part
+    if candidate.is_symlink():raise Reject("symlink_escape")
+    candidate.mkdir(exist_ok=True)
+    if work.resolve() not in candidate.resolve().parents:raise Reject("symlink_escape")
+    parent=candidate
    target=work/path
    if target.exists() and target.is_symlink():raise Reject("symlink_escape")
-   target.parent.mkdir(parents=True,exist_ok=True);target.write_text(str(content))
+   rendered=str(content)
+   if not target.exists() or target.read_text()!=rendered:target.write_text(rendered)
   for executable in (work/'bin').glob('*') if (work/'bin').is_dir() else ():
    executable.chmod(0o555)
   for scope in m["repo"].get("write_scope",[]):
@@ -280,18 +297,25 @@ class Broker:
   wo,tok=run/"work-order.json",run/"token"; wo.write_text(json.dumps(m,sort_keys=True,separators=(",",":"))); tok.write_text(token); os.chmod(wo,0o400);os.chmod(tok,0o400)
   account=self.account_lookup(m["subject"]["unix_user"]); uid,gid=account.pw_uid,account.pw_gid
   os.chown(wo,uid,gid);os.chown(tok,uid,gid)
-  identities=Path(os.environ.get("AGENTICDEV_IDENTITY_ROOT","/srv/agenticdev/identities")); identities.mkdir(parents=True,exist_ok=True,mode=0o700)
-  identity=self.safe_dir(identities,m["subject"]["principal_id"]); pi=self.safe_dir(identity,"pi"); os.chown(pi,uid,gid)
+  provider=m["runtime"]["provider"]
+  credentials=Path(account.pw_dir)/(".claude" if provider=="claude" else ".codex")
+  credentials.mkdir(mode=0o700,exist_ok=True)
+  if credentials.is_symlink() or Path(account.pw_dir).resolve() not in credentials.resolve().parents:raise Reject("credential_identity_mismatch")
+  os.chown(credentials,uid,gid);os.chmod(credentials,0o700)
   wid=m["work_order_id"]; net="ad-"+wid; name="agenticdev-"+wid; egress="egress-"+wid
   live=(authorization or {}).get("egress_allowlist")
   if not isinstance(live,list) or not live:raise Reject("live_egress_policy_missing")
   allow=','.join(live)
-  pod=["docker","run","-d","--name",name,"--user",f"{uid}:{gid}","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--pids-limit",str(l.pids),"--cpus",l.cpus,"--memory",f"{l.memory_mb}m","--memory-swap",f"{l.memory_mb}m","--storage-opt",f"size={l.disk_mb}M","--network",net,"--env","HTTP_PROXY=http://egress:8888","--env","HTTPS_PROXY=http://egress:8888","--env","NO_PROXY=localhost,127.0.0.1","--env","PI_CODING_AGENT_DIR=/pi","--mount",f"type=bind,src={pi},dst=/pi","--tmpfs","/tmp:rw,noexec,nosuid,size=64m","--tmpfs",f"/run/agenticdev:rw,noexec,nosuid,size=8m,mode=0700,uid={uid},gid={gid}","--mount",f"type=bind,src={work},dst=/workspace,readonly","--entrypoint","sleep","agenticdev/pod:installed","infinity"]
+  cred_dst="/home/node/.claude" if provider=="claude" else "/home/node/.codex"
+  pod=["docker","run","-d","--name",name,"--user",f"{uid}:{gid}","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--pids-limit",str(l.pids),"--cpus",l.cpus,"--memory",f"{l.memory_mb}m","--memory-swap",f"{l.memory_mb}m","--storage-opt",f"size={l.disk_mb}M","--network",net,"--env","HTTP_PROXY=http://egress:8888","--env","HTTPS_PROXY=http://egress:8888","--env","NO_PROXY=localhost,127.0.0.1","--mount",f"type=bind,src={credentials},dst={cred_dst}","--tmpfs","/tmp:rw,noexec,nosuid,size=64m","--tmpfs",f"/run/agenticdev:rw,noexec,nosuid,size=8m,mode=0700,uid={uid},gid={gid}","--mount",f"type=bind,src={work},dst=/workspace,readonly","--entrypoint","sleep","agenticdev/pod:installed","infinity"]
   for scope in m["repo"].get("write_scope",[]):
-   top=scope.split('/',1)[0]; pod[-3:-3]=["--mount",f"type=bind,src={work/top},dst=/workspace/{top}"]
-  pod[-3:-3]=["--mount",f"type=bind,src={work/'.git'},dst=/workspace/.git","--mount",f"type=bind,src={work/'.agenticdev'},dst=/workspace/.agenticdev","--mount",f"type=bind,src={work/'.agenticdev-trees'},dst=/trees"]
-  pod[-3:-3]=["--mount",f"type=bind,src={wo},dst=/run/agenticdev/work-order.json,readonly","--mount",f"type=bind,src={tok},dst=/run/agenticdev/token,readonly"]
-  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--network",net,"--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
+   top=scope.split('/',1)[0]; pod[-4:-4]=["--mount",f"type=bind,src={work/top},dst=/workspace/{top}"]
+  pod[-4:-4]=["--mount",f"type=bind,src={work/'.git'},dst=/workspace/.git","--mount",f"type=bind,src={work/'.agenticdev'},dst=/workspace/.agenticdev","--mount",f"type=bind,src={work/'.agenticdev-trees'},dst=/trees"]
+  pod[-4:-4]=["--mount",f"type=bind,src={wo},dst=/run/agenticdev/work-order.json,readonly","--mount",f"type=bind,src={tok},dst=/run/agenticdev/token,readonly"]
+  if m["runtime"]["mode"]=="analysis":
+   output=run/"analysis-output";output.mkdir(mode=0o700);os.chown(output,uid,gid)
+   pod[-4:-4]=["--mount",f"type=bind,src={output},dst=/analysis-output"]
+  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--user","100:101","--network",net,"--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
  def attach_stream(self,wid,token,user,conn):
   w=self._owned(wid,token,user); m=w["manifest"]
   if w["state"]!="RUNNING":raise Reject("workload_not_running")

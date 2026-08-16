@@ -85,7 +85,11 @@ def load_policy() -> dict:
          "work_order_id": signed.get("work_order_id"), "task": task,
          "max_loop_iterations": policy.get("max_loop_iterations"),
          "human_gate": policy.get("human_gate", []),
+         "control_plane": policy.get("control_plane"),
          "model_allowlist": policy.get("model_allowlist", [])}
+    p["provider"] = signed.get("runtime", {}).get("provider")
+    p["mode"] = signed.get("runtime", {}).get("mode")
+    p["worker_pool"] = signed.get("worker_pool", [])
     for key in ("project", "phase", "data_class", "scope", "egress"):
         if p.get(key) is None:
             fail(f"Work Order nemá povinné pole '{key}'.")
@@ -96,8 +100,7 @@ def check_model(p: dict) -> None:
     """
     NENÍ to záruka, je to čitelná hláška.
 
-    Pi umí model přepnout za běhu přes /model, takže cokoli, co se tu
-    zkontroluje, platí jen pro první požadavek. O tom, kam se agent
+    Tohle je čitelná kontrola serverové model policy. O tom, kam se agent
     doopravdy dostane, rozhoduje egress allowlist — u restricted projektu
     v něm žádný cloudový endpoint není. Viz ADR-0004.
     """
@@ -117,7 +120,7 @@ def check_model(p: dict) -> None:
     elif model:
         note(f"model {model}")
     else:
-        note("model si vybereš v Pi (/model)")
+        note(f"provider {p.get('provider')}; model určuje serverová policy nebo subscription default")
 
 
 def check_egress(p: dict) -> None:
@@ -220,6 +223,7 @@ def _agent_env(p: dict) -> dict:
         "AGENTICDEV_PHASE": p["phase"],
         "AGENTICDEV_DATA_CLASS": p["data_class"],
         "AGENTICDEV_MODEL": str(p.get("model") or ""),
+        "AGENTICDEV_PROVIDER": str(p.get("provider") or ""),
         # Bez tohohle spadne `agenticdev-decision` na chybějící proměnnou a
         # `/skill:rozhodnuti` neudělá nic — precedenty by se přestaly
         # zapisovat a nikdo by si toho nevšiml, protože chybí tiše.
@@ -230,9 +234,7 @@ def _agent_env(p: dict) -> dict:
         # Pod má uzavřený egress, takže cokoli, co Pi zkouší na startu
         # mimo allowlist, jen čeká na timeout. Vypnout to je rychlost,
         # ne omezení funkce.
-        "PI_OFFLINE": "1",
-        "PI_SKIP_VERSION_CHECK": "1",
-        "PI_TELEMETRY": "0",
+        "DISABLE_TELEMETRY": "1",
     })
 
     # HOME ukazuje do tmpfs, kde ten podadresář ještě není. Nástroje, které
@@ -243,12 +245,6 @@ def _agent_env(p: dict) -> dict:
             pathlib.Path(home).mkdir(parents=True, exist_ok=True)
         except OSError as e:
             fail(f"Domovský adresář {home} se nepodařilo založit: {e}")
-
-    # Přihlášení k modelu je na člověka a připojuje ho launcher. Když tam
-    # není, Pi se nemá čím ověřit — lepší to říct teď než po první otázce.
-    pi_dir = env.get("PI_CODING_AGENT_DIR")
-    if pi_dir and not (pathlib.Path(pi_dir) / "auth.json").is_file():
-        print(f"{C_WARN}  V {pi_dir} není auth.json — v Pi se přihlas přes /login.{C_OFF}")
 
     return env
 
@@ -285,8 +281,8 @@ def report_run(p: dict, role: str, outcome: str, duration_ms: int,
     Zapíše běh do ledgeru (`agent_run`), aby v panelu bylo vidět, co se
     dělo, jak dlouho a s jakým výsledkem.
 
-    Tokeny a cenu tu záměrně NEPOSÍLÁME. Harness je nezná — Pi je dnes
-    neohlašuje — a vymyslet je by znamenalo dát do auditní stopy číslo,
+    Tokeny a cenu tu záměrně NEPOSÍLÁME. Nativní CLI adaptéry je ve stabilním
+    společném formátu neohlašují — a vymyslet je by znamenalo dát do auditní stopy číslo,
     které si nikdo neověří. Nula je poctivější než odhad, o kterém se za
     měsíc bude věřit, že je to měření.
 
@@ -331,20 +327,27 @@ def report_run(p: dict, role: str, outcome: str, duration_ms: int,
         print(f"{C_DIM}  (běh se nezapsal: {e}){C_OFF}")
 
 
+def report_provider_state(p: dict, outcome: str) -> None:
+    if outcome not in {"AUTH_REQUIRED", "RATE_LIMITED"}: return
+    cp = p.get("control_plane"); provider = p.get("provider")
+    if not (cp and provider): return
+    try: tok = TOKEN.read_text().strip()
+    except OSError: return
+    import urllib.request
+    body = json.dumps({"provider": provider, "auth_status": outcome.lower()}).encode()
+    req = urllib.request.Request(f"{cp}/v1/provider-profile", data=body, method="POST",
+        headers={"content-type":"application/json", "Authorization":f"Bearer {tok}"})
+    try: urllib.request.urlopen(req, timeout=10).read()
+    except Exception: pass
+
+
 def run_agent(p: dict) -> int:
     env = _agent_env(p)
-
-    agent = shutil.which("pi")
-    if not agent:
-        print(f"{C_WARN}  Pi v obrazu není — otevírám shell.{C_OFF}")
-        cmd = ["/bin/bash"]
-    else:
-        # `-a` = důvěřovat projektu pro tenhle běh. Bez toho Pi nenačte
-        # .pi/settings.json, skills ani agenticdev-git extension a jen se
-        # zeptá — a v podu není komu odpovědět trvale, protože
-        # ~/.pi/agent/trust.json je pokaždé nový. Důvěru dáváme vědomě:
-        # ten obsah poslal server, ne cizí repozitář.
-        cmd = [agent, "-a"]
+    from providers import command
+    cmd = command(str(p.get("provider")))
+    if not cmd:
+        print(f"{C_ERR}  Nativní CLI pro provider {p.get('provider')} v obrazu není.{C_OFF}")
+        return 127
 
     print()
     deadline = p.get("deadline_ts")
@@ -396,6 +399,14 @@ def main() -> int:
     t0 = time.monotonic()
     ms = lambda: int((time.monotonic() - t0) * 1000)          # noqa: E731
 
+    if p.get("mode") == "analysis":
+        sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
+        import analysis_runner
+        outcome = analysis_runner.run(p, _agent_env(p))
+        report_run(p, "repository-analysis", outcome, ms(), _TRANSCRIPT)
+        report_provider_state(p, outcome)
+        return 0 if outcome in ("questions", "review") else 1
+
     # S work orderem jede úkol podle postupu, který vynucuje director
     # (ADR-0003): kontroly projektu rozhodují, ne agent. Bez work orderu
     # není co vynucovat, takže se otevře interaktivní session.
@@ -411,11 +422,12 @@ def main() -> int:
         print(f"  {C_DIM}úkol{C_OFF} {p['task'].get('title', '?')}")
         outcome = director.drive(p, _agent_env(p))
         report_run(p, "director", outcome, ms(), _TRANSCRIPT)
+        report_provider_state(p, outcome)
         return 0 if outcome in ("done", "review") else 1
 
     rc = run_agent(p)
-    # Interaktivní session píše svůj vlastní transkript Pi do /pi (na
-    # člověka, přežije teardown), takže tady zapisujeme jen to, co víme
+    # Provider drží vlastní session pod osobním UID; serverový audit zapisuje
+    # jen to, co spolehlivě víme
     # my: model, dobu, výsledek. Bez přiděleného úkolu se nezapíše nic a
     # report_run to řekne — `agent_run` na `task` odkazuje povinně.
     report_run(p, "interactive", f"exit:{rc}", ms(), _TRANSCRIPT)

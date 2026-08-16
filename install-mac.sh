@@ -86,6 +86,36 @@ if [[ -z "$LOGIN" ]]; then
   read -r -p "  login: " LOGIN </dev/tty
 fi
 [[ -n "$LOGIN" ]] || die "Bez loginu se nepřihlásím."
+LOGIN="$(printf '%s' "$LOGIN" | tr '[:upper:]' '[:lower:]')"
+[[ "$LOGIN" =~ ^[a-z_][a-z0-9_-]{0,31}$ ]] \
+  || die "Login smí obsahovat jen malá písmena, číslice, - a _."
+
+step "Registrace účtu"
+read -r -p "  jméno: " FIRST </dev/tty
+read -r -p "  příjmení: " LAST </dev/tty
+read -r -p "  e-mail: " EMAIL </dev/tty
+read -r -s -p "  týmové heslo: " TEAM_PASSWORD </dev/tty; printf '\n'
+KEYF="$HOME/.ssh/id_ed25519_agenticdev"
+if [[ ! -f "$KEYF" ]]; then
+  mkdir -p "$HOME/.ssh"; chmod 700 "$HOME/.ssh"
+  ssh-keygen -q -t ed25519 -N '' -C "agenticdev-$(hostname -s 2>/dev/null || hostname)" -f "$KEYF"
+fi
+json_string() { printf '%s' "$1" | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+BODY=$(printf '{"password":"%s","os":"mac","first_name":"%s","last_name":"%s","email":"%s","login":"%s","ssh_public_key":"%s"}' \
+  "$(json_string "$TEAM_PASSWORD")" "$(json_string "$FIRST")" "$(json_string "$LAST")" \
+  "$(json_string "$EMAIL")" "$LOGIN" "$(json_string "$(cat "$KEYF.pub")")")
+RESP=$(curl -fsS -X POST "$CP/v1/join" -H 'content-type: application/json' -d "$BODY") \
+  || die "Registrace selhala (heslo, rate limit nebo kolize loginu)."
+ENROLLMENT_ID=$(sed -n 's/.*"enrollment_id":"\([^"]*\)".*/\1/p' <<<"$RESP")
+STATUS_TOKEN=$(sed -n 's/.*"status_token":"\([^"]*\)".*/\1/p' <<<"$RESP")
+[[ -n "$ENROLLMENT_ID" && -n "$STATUS_TOKEN" ]] || die "Server nevrátil potvrzení registrace."
+for _ in {1..30}; do
+  STATUS=$(curl -fsS "$CP/join/status/$ENROLLMENT_ID?token=$STATUS_TOKEN" 2>/dev/null || true)
+  [[ "$STATUS" == *'"state":"ready"'* ]] && { ok "účet $LOGIN je připravený"; break; }
+  [[ "$STATUS" == *'"state":"failed"'* ]] && die "Server účet odmítl: $STATUS"
+  sleep 2
+done
+[[ "${STATUS:-}" == *'"state":"ready"'* ]] || die "Vytvoření účtu trvá příliš dlouho; instalaci můžeš bezpečně zopakovat."
 
 mkdir -p "$HOME_DIR"; chmod 700 "$HOME_DIR"
 cat > "$HOME_DIR/vps" <<CFG
@@ -138,10 +168,7 @@ if [[ "$CONNECT" == "domain" ]]; then
     chmod 600 "$HOME/.ssh/config"
     ok "zapsáno do ~/.ssh/config"
   fi
-  echo
-  printf "  ${Y}Pošli tenhle řádek správci${O} — bez něj se nepřihlásíš:\n\n"
-  printf "    %s\n\n" "$(cat "$KEYF.pub")"
-  printf "  ${D}Správce ho zapíše: sudo agenticdev-ctl keys add %s \"<ten řádek>\"${O}\n" "$LOGIN"
+  ok "SSH klíč je na serveru"
 fi
 
 # ═══ 4. Zkouška ════════════════════════════════════════════════
@@ -156,15 +183,12 @@ else
   fi
 fi
 
-cat <<EOF
-
-  ${G}Hotovo.${O}
-
-  Klikni na ${B}AgenticDev${O} v Aplikacích, nebo z terminálu:
-
-      ${Y}$(if [[ "$CONNECT" == "domain" ]]; then echo "ssh $LOGIN@$VPS_HOST"; else echo "tailscale ssh $LOGIN@$VPS_HOST"; fi)${O}
-      ${Y}agenticdev${O}
-
-  ${D}Poprvé se v Pi přihlas k modelu přes /login. Pak už to platí.${O}
-
-EOF
+printf "\n  ${G}Hotovo.${O}\n\n"
+printf "  Klikni na ${B}AgenticDev${O} v Aplikacích, nebo z terminálu:\n\n"
+if [[ "$CONNECT" == "domain" ]]; then
+  printf "      ${Y}ssh %s@%s${O}\n" "$LOGIN" "$VPS_HOST"
+else
+  printf "      ${Y}tailscale ssh %s@%s${O}\n" "$LOGIN" "$VPS_HOST"
+fi
+printf "      ${Y}agenticdev${O}\n\n"
+printf "  ${D}Při první práci vyber Claude nebo Codex a dokonči jeho nativní subscription login.${O}\n\n"

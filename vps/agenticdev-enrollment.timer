@@ -1,0 +1,11 @@
+[Unit]
+Description=Process AgenticDev enrollment queue
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=10s
+RandomizedDelaySec=2s
+Unit=agenticdev-enrollment.service
+
+[Install]
+WantedBy=timers.target

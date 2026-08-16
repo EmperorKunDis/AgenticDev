@@ -14,8 +14,8 @@ a desktop icon, and Tailscale only if you chose that mode.
 
 🇨🇿 [Česká verze tohoto dokumentu](README.cs.md)
 
-> **Status: alpha.** The sandbox has not yet been exercised against a real
-> Docker daemon, and Tailscale Funnel has not been tested end to end. Read
+> **Status: alpha.** The strict runtime and complete two-user subscription
+> flow still need a recorded live acceptance run on a clean VPS. Read
 > [Known limitations](#known-limitations) before you deploy this.
 
 ---
@@ -33,9 +33,9 @@ hope for the best. AgenticDev inverts that:
   in Postgres on your own server, not in someone's chat history. The audit
   trail on top of them is append-only and hash-chained — the database
   refuses an `UPDATE`, a `DELETE`, or a `TRUNCATE` on it.
-- **Onboarding is one link.** A person joins with a password, states who
-  they are, and the admin gives them an account on the server with one
-  command; you revoke it from the panel.
+- **Onboarding is one command.** The installer proves possession of a fresh
+  Ed25519 key and queues Unix, workstation and Forgejo identity creation;
+  no administrator copies a key or runs `user add`.
 
 - **The agent is sandboxed.** It runs in a container with no route to the
   internet — the only path out is a proxy that allows the domains you list.
@@ -58,7 +58,7 @@ anywhere in it. Pick the domain mode for that; see
 | Server | Debian 12 or Ubuntu 22.04/24.04, root access. **Sized by team:** ~2.5 GB RAM for the stack plus ~1.5 GB per person working *at the same time* — the agents run here, so about 8 GB for three people |
 | Network | **Either** Tailscale (nothing but the enrollment page is reachable from the internet) **or** a public domain with an A record (no third party; Caddy + Let's Encrypt). Pick at install time — see [Two ways to connect](#two-ways-to-connect) |
 | Clients | macOS, Linux, or Windows. Tailscale and a desktop icon; no Docker, no WSL2 |
-| Models | Each person signs in with their own subscription or API key, once, from the server |
+| Models | Each person signs in to native Claude Code or Codex CLI with their own subscription account; credentials are never shared |
 
 ## Two ways to connect
 
@@ -188,15 +188,12 @@ Tailscale mode, join the tailnet and then run a thin installer; in domain
 mode, just the installer. No Docker, no WSL2 — nothing heavy lands on their
 machine.
 
-They then appear in the panel under *čekají na účet*, with the exact command
-to run:
-
-```bash
-agenticdev-ctl user add msvanda "Martin Švanda" martin@praut.cz
-```
-
-That creates their account on the VPS, generates their keys, registers them,
-and uploads their SSH key to Forgejo. They work by clicking the icon, or:
+The installer asks for the shared team password without putting it in shell
+history, creates an Ed25519 key, and queues the account. A narrow root worker
+creates the Unix and Forgejo identities, removes Docker/sudo membership and
+atomically installs the public key. Repeating enrollment with the same login
+and key is idempotent; a different key for an existing login is rejected.
+They then work by clicking the icon, or:
 
 ```bash
 tailscale ssh msvanda@your-vps      # Tailscale mode
@@ -204,22 +201,11 @@ ssh msvanda@your-domain             # domain mode
 agenticdev
 ```
 
-**In domain mode there is one extra step**, because the tailnet is no longer
-doing the authenticating: the installer generates an SSH key on their machine
-and prints the public half. They send you that line, and you install it:
-
-```bash
-sudo agenticdev-ctl keys add msvanda "ssh-ed25519 AAAA… msvanda@mac"
-```
-
-`agenticdev-ctl user add` already installs any key that came in with a
-registration, and `agenticdev-ctl keys sync` picks up later ones. The control
-plane never writes to `authorized_keys` itself — it runs in a container and
-has no business reaching into `/home`.
-
-The first time, they sign in to a model inside Pi with `/login` — their own
-subscription or key. It stays in their own `~/.pi/agent` and is not shared,
-so two people can work at once and each pays for their own usage.
+The first time they choose Claude Code or Codex and complete that CLI's native
+subscription login. Sessions stay under their Unix UID in `~/.claude` or
+`~/.codex`; credentials never enter the database or another user's pod.
+Device JWT login itself uses a short-lived, single-use Ed25519 challenge,
+not a public-key fingerprint as a password.
 
 > Ordinary VPS accounts are removed from `docker` and `sudo`. A root-owned,
 > narrow broker verifies a signed Work Order and online assignment before it
@@ -238,7 +224,7 @@ Everything else — the panel, git, the API — stays on your tailnet.
 
 ### 3. Admin panel
 
-Model provider and API key, egress allowlist, both passwords, lease duration,
+Provider/model policy (never subscription credentials), egress allowlist, both passwords, lease duration,
 Tailscale keys, and SMTP are editable in the panel and take effect
 immediately. Settings that need a container restart live in
 `/srv/agenticdev/config/.env` and the panel shows them read-only.
@@ -316,15 +302,11 @@ what an agent may do during design means editing
 `workspace/_phase/design/scope` — not editing a user, and not trusting the
 agent to respect a rule.
 
-`control-plane/app/workspace.py` also merges `.pi/settings.json` across the
-base and phase layers, and chains `AGENTS.md` — but those carry
-instructions, not the boundary. The boundary is the mount.
-
-The same file pins the model for everyone via `enabledModels`, so two people
-on different subscriptions run the same agent and only the bill differs. If
-someone's subscription cannot serve that model, Pi says so and stops — a
-silent substitution would be exactly the kind of degradation this design
-refuses.
+`control-plane/app/workspace.py` materializes one canonical trusted skill
+bundle for Claude and Codex and chains the server-owned instructions. Those
+remain guidance; the broker mount is the boundary. Authentication and quota
+failures become `AUTH_REQUIRED` or `RATE_LIMITED`; there is no cross-account,
+cross-provider or API-key fallback.
 
 ## Seeing what happened
 
@@ -339,8 +321,8 @@ fact — which is what you need to tune the thing:
 | Panel → Úkoly → click a task | the timeline: events, runs and decisions merged in order |
 | `git notes` + `Task-Id:` trailer | which session produced a given line — `agenticdev-git who src/a.ts 42` |
 
-Interactive sessions keep their own transcript: Pi writes it to that
-person's `~/.pi/agent`, which survives teardown too. A run with no assigned
+Interactive sessions keep provider-owned history under that person's Unix
+home. A run with no assigned
 task is not recorded at all — `agent_run.task_id` is `NOT NULL` — and the
 harness says so on screen rather than failing quietly.
 
@@ -395,8 +377,9 @@ Honest status. These are tracked as blockers to 1.0:
   whether the required commit-status names match the ones Forgejo actually
   emits — the one thing that cannot be read off the code. Run it on your
   first PR. Until you see a red check block a merge, assume nothing.
-- **A repository with no tests passes the gate green.** The workflow says so
-  in the log as a warning. An empty gate is not a gate.
+- **The merge gate still needs live proof.** It now fails closed when it cannot
+  detect tests and requires at least one human approval, but both behaviors
+  must be verified against a real Forgejo PR before deployment.
 - **No metrics or tracing.** Grafana, Loki, Prometheus and Tempo are
   commented out in the compose file. What you do get is the ledger, a
   per-run record, a transcript file per run, and a per-task timeline in the
@@ -408,14 +391,13 @@ Honest status. These are tracked as blockers to 1.0:
   than `0 Kč`, which would read as free. Wiring real numbers needs usage
   data out of the harness's model client. (The `len/3` estimate is the
   context-size budget gate, not spend; there is no `PRICING` table.)
-- **The runner is root-equivalent.** It needs the Docker socket to run
-  jobs, and it runs on the same machine as the database and the signing
-  key. Anyone who can push a workflow to a project repo can read them.
-- **The orchestration layer (directors) does not exist** in the form the
-  architecture document describes — no signed, separately versioned
-  packages with release channels. What runs is `pod/harness/director.py`:
-  the task's progression is enforced by the project's own checks inside the
-  harness ([ADR-0003](docs/adr/0003-postup-ukolu-vynucuje-harness.md)).
+- **The isolated runner needs live proof.** Actions use a dedicated rootless
+  Docker-in-Docker daemon and never receive the host Docker socket. The
+  isolation and fail-closed merge behavior still need adversarial validation
+  on a disposable VPS.
+- **Directors are currently built into the versioned harness image.** The
+  signed Work Order activates isolated worker roles with separate prompts and
+  budgets; separately distributed director packages remain future work.
 - **Container escape is out of scope.** The pod drops all capabilities,
   runs non-root, and has no Docker socket — but a container is not a
   hypervisor. Treat it as a strong fence, not a vault.

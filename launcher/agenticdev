@@ -6,12 +6,12 @@
 #  Tailscale SSH, pustí tohle, vybere projekt a pracuje. Na jeho stroji
 #  není potřeba Docker.
 #
-#  Dvojklik na ikonu → vyber projekt → Pi je nastavené.
+#  Dvojklik na ikonu → vyber projekt → zvol Claude Code nebo Codex.
 #  VPS pošle subagenty, hooky, oprávnění a kontext podle fáze.
 #
 #  Co je čí (ADR-0007):
 #    prostředí — skills, hooky, nastavení — posílá server do projektu
-#    ~/.pi/agent — přihlášení k modelu a sessions, na člověka
+#    ~/.claude nebo ~/.codex — osobní subscription session
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
@@ -26,12 +26,25 @@ die()  { printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
 
 login() {
   . "$CFG" 2>/dev/null || die "Tenhle účet není připojený.\n   Správce ho založí na VPS:  agenticdev-ctl user add '$(id -un)'"
-  local r
-  r=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device" \
+  local challenge cid nonce signature r keyf="$CFG_DIR/device.key"
+  [[ -r "$keyf" ]] || die "Chybí soukromý device key; spusť onboarding znovu."
+  challenge=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device/challenge" \
         -H 'content-type: application/json' \
         -d "$(jq -nc --arg h "$HOSTNAME_" --arg f "$DEVICE_KEY_FP" \
               '{hostname:$h, device_key_fp:$f}')") \
     || die "Přihlášení selhalo. Jsi na tailnetu? Zkus: tailscale status"
+  cid=$(jq -r .challenge_id <<<"$challenge"); nonce=$(jq -r .nonce <<<"$challenge")
+  signature=$(python3 - "$keyf" "$nonce" <<'PY'
+import base64,sys
+from cryptography.hazmat.primitives import serialization
+key=serialization.load_ssh_private_key(open(sys.argv[1],'rb').read(),password=None)
+print(base64.b64encode(key.sign(sys.argv[2].encode())).decode())
+PY
+  ) || die "Device challenge se nepodařilo podepsat."
+  r=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device" \
+        -H 'content-type: application/json' \
+        -d "$(jq -nc --arg c "$cid" --arg s "$signature" '{challenge_id:$c,signature:$s}')") \
+    || die "Server odmítl proof-of-possession device klíče."
   echo "$r" | jq -r .token > "$CFG_DIR/token"
   chmod 600 "$CFG_DIR/token"
 }
@@ -96,6 +109,25 @@ cmd_work() {
     fi
   fi
 
+  printf "\n  ${B}Který osobní subscription účet použít?${O}\n\n"
+  printf "  1) Claude Code\n  2) Codex\n\n"
+  local provider_pick provider
+  read -rp "  číslo (Enter = 1): " provider_pick </dev/tty
+  case "${provider_pick:-1}" in 1) provider=claude ;; 2) provider=codex ;; *) die "Neplatný provider." ;; esac
+  if [[ "$provider" == claude ]]; then
+    command -v claude >/dev/null || die "Claude Code CLI na VPS chybí."
+    claude auth status >/dev/null 2>&1 || claude
+    claude auth status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Claude není platné."
+  else
+    command -v codex >/dev/null || die "Codex CLI na VPS chybí."
+    codex login status >/dev/null 2>&1 || codex login
+    codex login status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Codex není platné."
+  fi
+  curl -fsS -X POST "$CONTROL_PLANE/v1/provider-profile" \
+    -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+    -d "$(jq -nc --arg p "$provider" '{provider:$p,auth_status:"ready"}')" >/dev/null \
+    || die "Stav provider loginu se nepodařilo zapsat."
+
   echo; c "Stahuji nastavení pro $code"
   local b
   b=$(curl -fsS "$CONTROL_PLANE/v1/workspace/$code/bundle${override:+?phase=$override}" \
@@ -108,6 +140,64 @@ cmd_work() {
   dclass=$(echo "$b" | jq -r .project.data_class)
   tasks=$(echo "$b"  | jq -r .ready_tasks)
   ws="$WORK_ROOT/$code"
+
+  local analysis_status
+  analysis_status=$(echo "$b" | jq -r '.project.analysis_status // "awaiting_provider"')
+  if [[ "$analysis_status" != ready ]]; then
+    command -v agenticdev-broker-client >/dev/null \
+      || die "Chybí klient privilegovaného brokeru; kontaktuj správce."
+    c "Spouštím read-only analýzu repozitáře ($analysis_status)"
+    curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/retry" \
+      -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+      -d "$(jq -nc --arg p "$provider" '{provider:$p}')" >/dev/null \
+      || die "Analýzu se nepodařilo zařadit."
+    local awo aid astarted
+    awo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next?project=$code&provider=$provider&analysis=true" \
+      -H "Authorization: Bearer $t") || die "Server nevydal podepsaný analysis Work Order."
+    jq -e '.work_order.signature and (.work_order.runtime.mode == "analysis")' >/dev/null <<<"$awo" \
+      || die "Neplatný analysis Work Order."
+    astarted=$(AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client start \
+      <<<"$(jq -c '.work_order' <<<"$awo")") || die "Broker analýzu odmítl."
+    aid=$(jq -r .work_order_id <<<"$astarted")
+    AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client attach "$aid" \
+      || die "Analýza byla přerušena."
+    AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client stop "$aid" >/dev/null || true
+    analysis_status=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" \
+      -H "Authorization: Bearer $t" | jq -r .state)
+    local analysis_json answers='{}' count question answer
+    analysis_json=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" -H "Authorization: Bearer $t")
+    if [[ "$analysis_status" == questions ]]; then
+      count=$(jq '.questions|length' <<<"$analysis_json")
+      for ((i=0;i<count;i++)); do
+        question=$(jq -r ".questions[$i].question // .questions[$i]" <<<"$analysis_json")
+        printf "\n  ${B}%s${O}\n" "$question"
+        read -r -p "  odpověď: " answer </dev/tty
+        answers=$(jq -c --arg k "$i" --arg v "$answer" '. + {($k):$v}' <<<"$answers")
+      done
+      curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/answers" \
+        -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+        -d "$(jq -nc --argjson a "$answers" '{answers:$a}')" >/dev/null \
+        || die "Odpovědi se nepodařilo uložit."
+      analysis_json=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" -H "Authorization: Bearer $t")
+    fi
+    local review_file
+    review_file=$(mktemp); jq '.result' <<<"$analysis_json" >"$review_file"
+    printf "\n  Otevírám výsledek analýzy k lidské revizi. Ulož a zavři editor.\n"
+    "${EDITOR:-nano}" "$review_file" </dev/tty >/dev/tty
+    jq -e 'type=="object"' "$review_file" >/dev/null || die "Výsledek musí zůstat JSON objekt."
+    curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/revise" \
+      -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+      -d "$(jq -nc --slurpfile r "$review_file" '{result:$r[0],questions:[]}')" >/dev/null \
+      || die "Upravená analýza neprošla schema/citation validací."
+    rm -f "$review_file"
+    read -r -p "  Schválit analýzu a odemknout mutující úkoly? [y/N] " answer </dev/tty
+    [[ "$answer" =~ ^[yYaA]$ ]] || { warn "Analýza zůstává v review; úkoly jsou zamčené."; return 0; }
+    curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/approve" \
+      -H "Authorization: Bearer $t" >/dev/null || die "Schválení selhalo."
+    ok "analýza schválena; mutující Work Ordery jsou odemčené"
+    b=$(curl -fsS "$CONTROL_PLANE/v1/workspace/$code/bundle${override:+?phase=$override}" \
+      -H "Authorization: Bearer $t") || die "Schválený bundle nelze načíst."
+  fi
 
   mkdir -p "$WORK_ROOT"
   if [[ -d "$ws/.git" ]]; then
@@ -150,7 +240,7 @@ DEC
   # Jediným autoritativním vstupem je přesně podepsaný Work Order; všechny
   # runtime detaily skládá root-owned broker z immutable šablony.
   local wo wo_id
-  wo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next?project=$code" \
+  wo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next?project=$code&provider=$provider" \
        -H "Authorization: Bearer $t") \
     || die "Server nevydal Work Order. Bez ověřitelné autorizace pod nespustím."
   jq -e '.work_order.signature and .work_order.nonce' >/dev/null <<<"$wo" \
@@ -254,7 +344,7 @@ cmd_doctor() {
     command -v $t >/dev/null && ok "$t" || { warn "chybí: $t"; bad=1; }
   done
   command -v agenticdev-broker-client >/dev/null && ok "privilegovaný broker" || { warn "broker klient chybí"; bad=1; }
-  ok "modelové přihlášení spravuje broker per principal (v Pi případně /login)"
+  ok "Claude/Codex přihlášení je oddělené per Unix UID"
   command -v tailscale >/dev/null && ok "tailscale" || warn "tailscale"
   if [[ -f "$CFG" ]]; then
     ok "konfigurace"

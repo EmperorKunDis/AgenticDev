@@ -200,32 +200,31 @@ def emit(policy: dict, verb: str, payload: dict) -> None:
 def agent_turn(prompt: str, env: dict, deadline: float | None,
                ws: pathlib.Path = WORKSPACE) -> int:
     """
-    Jedno kolo agenta neinteraktivně. `-a` dává důvěru projektu pro tenhle
-    běh — jinak by Pi nenačetlo skills ani extension ze serveru.
+    Jedno kolo nativního provider CLI v novém procesu a odděleném kontextu.
     """
-    pi = shutil.which("pi")
-    if not pi:
-        _say(f"{C_ERR}Pi v obrazu není{C_OFF}")
+    from providers import command
+    provider = env.get("AGENTICDEV_PROVIDER", "")
+    cmd = command(provider, prompt)
+    if not cmd:
+        _say(f"{C_ERR}Nativní CLI pro provider {provider} není{C_OFF}")
         return 127
     timeout = None
     if deadline:
         timeout = max(60, int(deadline - time.time()))
 
-    cmd = [pi, "-a", "-p", prompt]
-    if _LOG and shutil.which("bash") and shutil.which("tee"):
+    if _LOG:
         _log(f"\n--- kolo agenta ({time.strftime('%H:%M:%SZ', time.gmtime())})\n"
              f"--- prompt:\n{prompt}\n--- výstup:")
-        # Výstup má jít na obrazovku i do souboru zároveň, proto tee.
-        # `-o pipefail`, aby se vrátil návratový kód Pi a ne kód tee —
-        # bez toho by selhané kolo vypadalo jako úspěšné.
-        # Prompt jde proměnnou prostředí: má víc řádků a uvozovky, na
-        # příkazové řádce by se rozsypal.
-        env = {**env, "AGENTICDEV_PROMPT": prompt}
-        cmd = ["bash", "-o", "pipefail", "-c",
-               '"$0" -a -p "$AGENTICDEV_PROMPT" 2>&1 | tee -a "$AGENTICDEV_TRANSCRIPT"',
-               pi]
     try:
-        p = subprocess.run(cmd, cwd=str(ws), env=env, timeout=timeout)
+        p = subprocess.run(cmd, cwd=str(ws), env=env, timeout=timeout,
+                           capture_output=True, text=True)
+        output = (p.stdout or "") + (p.stderr or "")
+        _say(output.rstrip())
+        if _LOG: _log(output.rstrip())
+        from providers import classify_failure
+        state = classify_failure(output, p.returncode)
+        if state == "AUTH_REQUIRED": return 78
+        if state == "RATE_LIMITED": return 75
         return p.returncode
     except subprocess.TimeoutExpired:
         _say(f"{C_WARN}vypršel lease uprostřed kola{C_OFF}")
@@ -246,6 +245,12 @@ FIX = """Kontroly projektu selhaly. Tohle vypsaly:
 
 Sprav to. Neupravuj testy tak, aby jen prošly — pokud je špatný test, řekni
 to a vysvětli proč."""
+
+ROLE_PROMPTS = {
+    "architect": "Read-only zkontroluj plán proti architektuře a datovým tokům. Vrať stručné nálezy; nic neupravuj.",
+    "tester": "Read-only zkontroluj testovací strategii a chybějící failure paths. Nic neupravuj.",
+    "reviewer": "Read-only proveď code, security a operations review aktuálního diffu. Nic neupravuj.",
+}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -270,16 +275,29 @@ def drive(policy: dict, env: dict, ws: pathlib.Path = WORKSPACE) -> str:
     total = 3
     outcome = "blocked"
 
+    def recoverable(rc: int) -> str | None:
+        state = "AUTH_REQUIRED" if rc == 78 else "RATE_LIMITED" if rc == 75 else None
+        if state:
+            emit(policy, state.lower(), {"provider": env.get("AGENTICDEV_PROVIDER")})
+            try:
+                (ws / ".agenticdev").mkdir(exist_ok=True)
+                (ws / ".agenticdev" / "outcome").write_text(state + "\n")
+            except OSError: pass
+        return state
+
     # ── 1. plán ──
     _step(1, total, "Plán")
     emit(policy, "phase_started", {"phase": "plan", "n": 0})
-    if agent_turn(PLAN, env, deadline, ws) != 0:
+    plan_rc = agent_turn(PLAN, env, deadline, ws)
+    if state := recoverable(plan_rc): return state
+    if plan_rc != 0:
         _say(f"{C_WARN}plán se nedokončil, jdu dál — kontroly stejně rozhodnou{C_OFF}")
 
     # ── 2. implementace a kontroly ──
     _step(2, total, "Implementace")
     emit(policy, "phase_started", {"phase": "implement", "n": 0})
-    agent_turn(IMPLEMENT, env, deadline, ws)
+    implement_rc = agent_turn(IMPLEMENT, env, deadline, ws)
+    if state := recoverable(implement_rc): return state
 
     ok, report = run_checks(checks, ws)
     n = 0
@@ -288,7 +306,9 @@ def drive(policy: dict, env: dict, ws: pathlib.Path = WORKSPACE) -> str:
         _say(f"{C_WARN}{report.splitlines()[0]}{C_OFF}")
         _say(f"oprava {n}/{max_fix}")
         emit(policy, "checks_failed", {"n": n, "report": report[:2000]})
-        if agent_turn(FIX.format(report=report), env, deadline, ws) == 124:
+        fix_rc = agent_turn(FIX.format(report=report), env, deadline, ws)
+        if state := recoverable(fix_rc): return state
+        if fix_rc == 124:
             _say(f"{C_ERR}vypršel lease{C_OFF}")
             outcome = "aborted"
             break
@@ -304,6 +324,26 @@ def drive(policy: dict, env: dict, ws: pathlib.Path = WORKSPACE) -> str:
     else:
         _say(f"{C_OK}{report}{C_OFF}")
         emit(policy, "checks_passed", {"n": n})
+
+        from runtime_hooks import changed_diff, secret_findings
+        leaked = secret_findings(changed_diff(ws))
+        if leaked:
+            emit(policy, "secret_scan_failed", {"locations": leaked})
+            _say(f"{C_ERR}secret scan odmítl diff: {', '.join(leaked)}{C_OFF}")
+            return "blocked"
+
+        # Každá role je nový nativní CLI proces bez konverzační historie
+        # jiné role. Její výstup je rada; deterministické kontroly rozhodují.
+        for worker in policy.get("worker_pool") or []:
+            role = worker.get("role") if isinstance(worker, dict) else None
+            prompt = ROLE_PROMPTS.get(str(role))
+            if not prompt:
+                continue
+            emit(policy, "worker_started", {"role": role, "profile": worker.get("profile"),
+                 "budget_tokens": worker.get("budget_tokens"),
+                 "output_schema": worker.get("output_schema")})
+            rc = agent_turn(prompt, env, deadline, ws)
+            emit(policy, "worker_finished", {"role": role, "exit": rc})
 
         # ── 3. human gate ──
         _step(3, total, "Co musí vidět člověk")

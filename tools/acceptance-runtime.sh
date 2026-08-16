@@ -66,6 +66,10 @@ if [[ -n "$wid" ]]; then
  if [[ -n "$other" ]]; then runuser -u "$other" -- env AGENTICDEV_DEVICE_TOKEN="$DEVICE_TOKEN" agenticdev-broker-client attach "$wid" </dev/null >/dev/null 2>&1 && fail foreign-attach accepted || pass foreign-attach; else skip foreign-attach ACCEPTANCE_OTHER_USER-not-set; fi
  as_user agenticdev-broker-client attach "$wid" --command sh >/dev/null 2>&1 && fail arbitrary-attach-command accepted || pass arbitrary-attach-command
  if [[ -n "$other" ]]; then runuser -u "$other" -- env AGENTICDEV_DEVICE_TOKEN="$DEVICE_TOKEN" agenticdev-broker-client stop "$wid" >/dev/null 2>&1 && fail foreign-stop accepted || pass foreign-stop; else skip foreign-stop ACCEPTANCE_OTHER_USER-not-set; fi
+ uid=$(id -u "$ACCEPTANCE_USER"); gid=$(id -g "$ACCEPTANCE_USER")
+ commit_out=$(docker exec --user "$uid:$gid" "agenticdev-$wid" sh -c \
+      'printf "acceptance\n" > /workspace/src/.agenticdev-acceptance; cd /workspace; git add src/.agenticdev-acceptance; git commit -m "test: live runtime acceptance"' \
+      2>&1) && pass acceptance-commit || fail acceptance-commit "$commit_out"
  as_user agenticdev-broker-client stop "$wid" >/dev/null 2>&1 && pass own-stop || fail own-stop
 else
  for c in no-host-pid no-host-network not-privileged pid-limit-configured ram-limit-configured cpu-limit-configured runtime-probe own-attach foreign-attach arbitrary-attach-command foreign-stop own-stop; do skip "$c" 'valid workload unavailable'; done

@@ -29,6 +29,11 @@
 	# Caddy místo klientovy, limit by po pěti pokusech zamkl celý svět.
 
 	# Control plane API — pro stanice a pody na tailnetu
+	handle /health {
+		rewrite * /v1/health
+		reverse_proxy control-plane:8080
+	}
+
 	handle /v1/* {
 		reverse_proxy control-plane:8080
 	}

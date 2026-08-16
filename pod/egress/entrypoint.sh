@@ -31,8 +31,6 @@ done
 N=$(wc -l < "$FILTER" | tr -d ' ')
 
 cat > "$CONF" <<EOF
-User tinyproxy
-Group tinyproxy
 Port 8888
 Timeout 600
 MaxClients 40

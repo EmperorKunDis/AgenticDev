@@ -1,6 +1,6 @@
-# ADR-0001: Agentem v podu je Pi, ne Claude Code
+# ADR-0001: Historické rozhodnutí použít Pi
 
-**Stav:** přijato
+**Stav:** nahrazeno nativními Claude Code a Codex CLI (16. 8. 2026)
 **Datum:** 12. 8. 2026
 
 ## Kontext
@@ -25,3 +25,11 @@ stojí za zaznamenání.
 
 Cena, kterou platíme: tým používá Claude Code jinde, takže lidé pracují
 se dvěma různými agenty a jejich konfiguracemi.
+
+## Nahrazující rozhodnutí
+
+Modelovým klientem už Pi není. Uživatel vždy vybere nativní `claude -p`
+nebo `codex exec` a přihlásí vlastní subscription účet. Credentials zůstávají
+pod jeho Unix UID v `~/.claude` či `~/.codex`. Serverový canonical bundle se
+materializuje do formátu obou providerů; staré `.pi` soubory jsou pouze
+historické kompatibilní artefakty a runtime je nenačítá.

@@ -127,21 +127,19 @@ i při `required_approvals == 0`. Je nutný živý negativní i pozitivní PR te
 
 ### 10. Repo bez testů nesmí automaticky projít zeleně
 
-**MISSING**
+**NEEDS LIVE VERIFICATION**
 
-Šablona `TEST_WORKFLOW` v `control-plane/app/admin.py` pro `kind=none` jen vydá
-warning a skončí úspěšně. To je přesný opak požadavku. Detekce také obsahuje
-fail-open `pip install ... || true`, takže neinstalovatelný Python projekt může
-být vyhodnocen zavádějícím způsobem.
+Šablona `TEST_WORKFLOW` v `control-plane/app/admin.py` pro `kind=none` skončí
+nenulově. Detekce stále obsahuje fallback instalace Python projektu; živý PR
+musí potvrdit, že Forgejo tento výsledek skutečně použije k blokaci merge.
 
 ### 11. Minimálně jedno human approval
 
-**MISSING**
+**NEEDS LIVE VERIFICATION**
 
-`MERGE_GATE_APPROVALS` má v `control-plane/app/settings.py` výchozí hodnotu
-nula; `_forgejo_branch_gate` ji předává Forgeju. Stavová kontrola nulu pouze
-zobrazí jako problém, ale `gate_status["ok"]` approval nezahrnuje. Server tedy
-nevynucuje nejméně jedno schválení.
+Obě cesty nasazení branch protection omezují `MERGE_GATE_APPROVALS` na minimum
+1 a `gate_status["ok"]` bez approval neprojde. Zbývá živě potvrdit, že Forgejo
+požadavek vynutí pro relevantní role.
 
 ### 12. Direct push na `main` zakázán server-side
 
@@ -191,6 +189,25 @@ Nejsou současně revokovány workstation/JWT, leases, Unix login a SSH keys,
 Forgejo key/session/token, běžící pod, per-user model credentials a sessions.
 Chybí auditní událost i idempotentní test.
 
+### 17. Autentizace stanice musí dokazovat držení soukromého klíče
+
+**MISSING**
+
+`/v1/auth/device` vydává JWT pouze podle fingerprintu veřejného SSH klíče a
+launcher neposílá podpis ani challenge. Fingerprint není tajemství; v public
+domain režimu proto jeho znalost stačí k vydávání se za stanici. Je nutný
+replay-safe challenge-response protokol (nebo mTLS) a negativní test
+impersonace.
+
+### 18. TLS konfigurace musí odpovídat režimu připojení
+
+**MISSING**
+
+Jediný `vps/Caddyfile` bezpodmínečně používá Tailscale certificate provider,
+přestože domain režim slibuje veřejné ACME/Let's Encrypt a tailscaled socket
+nemá. Instalátor musí zvolit režimovou konfiguraci a CI musí parsovat a ověřit
+obě varianty.
+
 ## Blokující závislosti a pořadí P0
 
 1. Na izolované VPS spustit `tools/acceptance-runtime.sh` a ověřit broker,
@@ -199,10 +216,12 @@ Chybí auditní událost i idempotentní test.
    později doplnit jednorázové enrollment credentials a offboarding.
 3. Podepsaný Work Order a immutable runtime template jsou implementovány;
    produkční přijetí blokuje živý end-to-end důkaz.
-4. Přesunout merge runner mimo Docker socket na aplikační VPS (rootless nebo
-   oddělený worker), nastavit fail-closed workflow a approval ≥ 1.
-5. Přidat adversarial integrační suite, restore drill a kill/offboarding suite.
-6. Teprve poté provést živý acceptance run a archivovat strojově čitelné
+4. Živě ověřit implementovaný rootless merge runner bez host Docker socketu,
+   fail-closed workflow a approval ≥ 1.
+5. Živě ověřit implementovaný jednorázový Ed25519 proof-of-possession protokol
+   a obě režimové TLS konfigurace.
+6. Přidat adversarial integrační suite, restore drill a kill/offboarding suite.
+7. Teprve poté provést živý acceptance run a archivovat strojově čitelné
    výsledky. P1/P2 zůstávají blokované.
 
 ## Povinný live VPS acceptance důkaz
@@ -226,5 +245,6 @@ Zdrojový strom již uživateli Docker oprávnění nedává, ale bez live upgra
 nelze potvrdit odstranění starých supplementary groups ani práva socketů.
 Broker-owned Git, PTY a lifecycle jsou implementované, ne však live-proven.
 XFS project quota a skutečné vyčerpání limitů musí být ověřeny acceptance
-runem. Forgejo runner nadále drží host Docker socket (oddělený P0 blok) a
-ostatní readiness mezery z této matice zůstávají. P0 proto není ready.
+runem. Forgejo runner nyní používá samostatný rootless daemon bez host Docker
+socketu, ale jeho izolace ještě není live-proven. Ostatní readiness mezery z
+této matice zůstávají. P0 proto není produkčně ready.

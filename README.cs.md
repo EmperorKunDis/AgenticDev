@@ -18,8 +18,8 @@ zapisují zpátky do auditovatelné evidence.
 
 🇬🇧 [English version of this document](README.md)
 
-> **Stav: alfa.** Sandbox ani klienti pro Windows a Linux nebyli zatím
-> odzkoušeni v ostrém provozu. Než to nasadíš, přečti si
+> **Stav: alfa.** Strict runtime a úplný tok dvou uživatelů se subscription
+> účty ještě potřebují zaznamenaný live acceptance na čistém VPS. Než to nasadíš, přečti si
 > [Známá omezení](#známá-omezení) na konci.
 
 ---
@@ -30,8 +30,8 @@ zapisují zpátky do auditovatelné evidence.
 |---|---|
 | Server | Debian 12 nebo Ubuntu 22.04/24.04, aspoň 4 GB RAM, root |
 | Síť | **Buď** Tailscale (z internetu je vidět jen registrace), **nebo** veřejná doména s A záznamem (bez třetí strany, Caddy + Let's Encrypt). Vybírá se při instalaci |
-| Klienti | macOS, Linux nebo Windows 10 build 19041+ (přes WSL2) |
-| Volitelně | API klíč k modelu, nebo lokální Ollama |
+| Klienti | macOS, Linux nebo Windows; lokálně není potřeba Docker |
+| Modely | Osobní subscription účet pro nativní Claude Code nebo Codex CLI; credentials se nesdílejí |
 
 ## Dvě cesty, jak se k platformě dostat
 
@@ -127,17 +127,10 @@ otevře agenta a výběr projektu.
 
 Objeví se v panelu v záložce *tým*, kde jde každý stroj zvlášť odpojit.
 
-**V režimu doména je jeden krok navíc**, protože autentizaci už nedělá
-tailnet: instalátor na stroji vygeneruje SSH klíč a vypíše jeho veřejnou
-část. Ten řádek ti člověk pošle a ty ho zapíšeš:
-
-```bash
-sudo agenticdev-ctl keys add msvanda "ssh-ed25519 AAAA… msvanda@mac"
-```
-
-`agenticdev-ctl user add` klíč z registrace zapíše sám, `agenticdev-ctl keys
-sync` dobere pozdější. Control plane do `authorized_keys` nezapisuje a
-nemá — běží v kontejneru a do `/home` mu nic nepatří.
+Instalátor skrytě vyžádá týmové heslo, vytvoří Ed25519 klíč a zařadí
+účet. Úzký root worker automaticky vytvoří Unix a Forgejo identitu,
+odebere Docker/sudo a zapíše veřejný klíč. Stejný login a klíč jsou
+idempotentní; jiný klíč pro existující login se odmítne.
 
 **Co je reálně na internetu:** v režimu Tailscale jediná cesta —
 registrační stránka vystavená přes
@@ -151,7 +144,7 @@ režimu. Drží to `BIND_ADDR` a kontroluje `agenticdev-ctl smoke`.
 
 ### 3. Admin panel
 
-Dodavatel modelů a API klíč, allowlist domén, obě hesla, platnost lease,
+Provider/model policy bez subscription credentials, allowlist domén, obě hesla, platnost lease,
 Tailscale klíče a SMTP se mění přímo v panelu a platí okamžitě. Věci, které
 potřebují restart kontejneru, žijí v `/srv/agenticdev/config/.env` a panel je
 ukazuje jen ke čtení.
@@ -167,7 +160,8 @@ ukazuje jen ke čtení.
 ## Denní práce
 
 **Klikneš na AgenticDev v Docku.** Otevře se Ghostty, vybereš projekt
-šipkami (nebo filtruješ psaním), a jsi v Pi. Normální konverzace.
+šipkami (nebo filtruješ psaním), zvolíš Claude Code nebo Codex a pracuješ
+přes svůj osobní subscription login v `~/.claude` nebo `~/.codex`.
 
 ```
   projekt ›
@@ -315,8 +309,9 @@ Poctivý stav. Vedeno jako blokátory verze 1.0:
   vyčíst nedá: jestli se požadovaná jména commit statusů potkávají s těmi,
   která Forgejo doopravdy vydává. Pusť to na prvním PR. Dokud neuvidíš
   červenou kontrolu zablokovat merge, neber to jako dokázané.
-- **Repozitář bez testů projde branou nazeleno.** Workflow to napíše do logu
-  jako varování. Prázdná brána není brána.
+- **Merge gate stále potřebuje živý důkaz.** Když nerozpozná testy, skončí
+  chybou a vyžaduje nejméně jedno lidské schválení, ale obojí se před
+  nasazením musí ověřit na skutečném PR ve Forgeju.
 - **Chybí metriky a trace.** Grafana, Loki, Prometheus i Tempo jsou v
   compose zakomentované. Co máš: ledger, záznam každého běhu, transkript
   ke každému běhu a časovou osu úkolu v panelu — viz

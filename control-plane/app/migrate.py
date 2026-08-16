@@ -47,6 +47,70 @@ STEPS: list[tuple[str, str]] = [
         """,
     ),
     (
+        "enrollment — automatické založení izolovaného účtu",
+        """
+        ALTER TABLE enrollment ADD COLUMN IF NOT EXISTS login TEXT;
+        ALTER TABLE enrollment ADD COLUMN IF NOT EXISTS ssh_public_key TEXT;
+        ALTER TABLE enrollment ADD COLUMN IF NOT EXISTS status_token_hash TEXT;
+        ALTER TABLE enrollment ADD COLUMN IF NOT EXISTS state TEXT NOT NULL DEFAULT 'pending';
+        ALTER TABLE enrollment ADD COLUMN IF NOT EXISTS error TEXT;
+        CREATE UNIQUE INDEX IF NOT EXISTS enrollment_active_login
+          ON enrollment (login) WHERE state IN ('pending', 'provisioning', 'ready');
+        """,
+    ),
+    (
+        "provider profiles a verzovaná repository intelligence",
+        """
+        CREATE TABLE IF NOT EXISTS provider_profile (
+          principal_id uuid NOT NULL REFERENCES principal(id) ON DELETE CASCADE,
+          provider text NOT NULL CHECK (provider IN ('claude','codex')),
+          auth_status text NOT NULL DEFAULT 'unknown'
+            CHECK (auth_status IN ('unknown','ready','auth_required','rate_limited')),
+          last_verified_at timestamptz,
+          account_label text,
+          PRIMARY KEY (principal_id, provider)
+        );
+        ALTER TABLE project ADD COLUMN IF NOT EXISTS analysis_status text
+          NOT NULL DEFAULT 'awaiting_provider';
+        CREATE TABLE IF NOT EXISTS repository_analysis (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          project_id uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+          commit_sha text NOT NULL CHECK (commit_sha ~ '^[0-9a-f]{40}$'),
+          analyzer_version text NOT NULL,
+          state text NOT NULL CHECK
+            (state IN ('awaiting_provider','analyzing','questions','review','ready','failed')),
+          provider text CHECK (provider IN ('claude','codex')),
+          static_scan jsonb NOT NULL DEFAULT '{}'::jsonb,
+          result jsonb,
+          questions jsonb NOT NULL DEFAULT '[]'::jsonb,
+          answers jsonb NOT NULL DEFAULT '{}'::jsonb,
+          approved_at timestamptz,
+          approved_by uuid REFERENCES principal(id),
+          error text,
+          created_at timestamptz NOT NULL DEFAULT now(),
+          updated_at timestamptz NOT NULL DEFAULT now(),
+          UNIQUE (project_id, commit_sha, analyzer_version)
+        );
+        CREATE INDEX IF NOT EXISTS repository_analysis_project_state
+          ON repository_analysis(project_id, state, updated_at DESC);
+        """,
+    ),
+    (
+        "proof-of-possession device authentication",
+        """
+        ALTER TABLE workstation ADD COLUMN IF NOT EXISTS device_public_key TEXT;
+        CREATE TABLE IF NOT EXISTS device_challenge (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          workstation_id uuid NOT NULL REFERENCES workstation(id) ON DELETE CASCADE,
+          nonce text NOT NULL UNIQUE,
+          expires_at timestamptz NOT NULL,
+          used_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE INDEX IF NOT EXISTS device_challenge_expiry ON device_challenge(expires_at);
+        """,
+    ),
+    (
         "event — append-only přes trigger místo pravidla",
         # Pravidlo na UPDATE blokovalo `INSERT ... ON CONFLICT` na event,
         # a tím KAŽDÝ zápis do auditní stopy. Instalace vydané předtím

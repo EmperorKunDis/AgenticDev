@@ -16,7 +16,12 @@ result("capabilities","PASS" if cap=='0000000000000000' else "FAIL",str(cap))
 try:
  pathlib.Path('/workspace/.acceptance-ro').write_text('x'); result("workspace-ro","FAIL","write succeeded")
 except OSError as e:result("workspace-ro","PASS",type(e).__name__)
-scope=next((p for p in pathlib.Path('/workspace').iterdir() if p.name not in ('.git','.agenticdev')),None)
+try:
+ work_order=json.loads(pathlib.Path('/run/agenticdev/work-order.json').read_text())
+ scope_names=[s.split('/',1)[0] for s in work_order.get('repo',{}).get('write_scope',[])]
+ scope=next((pathlib.Path('/workspace')/s for s in scope_names
+             if (pathlib.Path('/workspace')/s).is_dir()),None)
+except (OSError,ValueError):scope=None
 if scope:
  try:
   f=scope/'.agenticdev-acceptance-rw';f.write_text('x');f.unlink();result("scope-rw","PASS",scope.name)
