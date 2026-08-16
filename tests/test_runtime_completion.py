@@ -110,7 +110,8 @@ class RuntimeCompletion(unittest.TestCase):
   compose=(ROOT/'vps/docker-compose.yml').read_text()
   runner=compose[compose.index('  runner-docker:'):compose.index('  # ─── Artefakty')]
   self.assertNotIn('/var/run/docker.sock',runner)
-  self.assertIn('27-dind-rootless',runner);self.assertIn('runner-isolated',runner)
+  self.assertIn('27-dind',runner);self.assertNotIn('dind-rootless',runner)
+  self.assertIn('runner-isolated',runner);self.assertIn('/var/lib/docker',runner)
  def test_worker_roles_have_separate_budget_and_verifiable_output_contract(self):
   main=(ROOT/'control-plane/app/main.py').read_text();director=(ROOT/'pod/harness/director.py').read_text()
   self.assertIn('"budget_tokens": 20_000',main)

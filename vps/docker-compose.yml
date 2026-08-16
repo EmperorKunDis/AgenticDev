@@ -113,18 +113,18 @@ services:
   # NENÍ pod agenta: testy ověřuje něco jiného než ten, kdo je napsal
   # (ADR-0006).
   #
-  # Joby používají oddělený rootless Docker daemon. Runner nikdy nevidí
+  # Joby používají oddělený Docker-in-Docker daemon. Runner nikdy nevidí
   # hostitelský Docker socket, databázi ani podpisový klíč.
   runner-docker:
     <<: [*restart, *logging]
-    image: docker:${DIND_TAG:-27-dind-rootless}
+    image: docker:${DIND_TAG:-27-dind}
     profiles: ["gate"]
     privileged: true
     environment:
       DOCKER_TLS_CERTDIR: ""
     command: ["--host=tcp://0.0.0.0:2375"]
     volumes:
-      - runner-docker-data:/home/rootless/.local/share/docker
+      - runner-docker-data:/var/lib/docker
     networks: [runner-isolated]
 
   runner:

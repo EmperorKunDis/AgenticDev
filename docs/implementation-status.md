@@ -32,7 +32,7 @@ it requires the live acceptance evidence below.
 - Two clean Macs end to end: one Claude subscription and one Codex subscription,
   including login reuse, expiry/quota recovery, analysis, approval, task, tests
   and PR.
-- Rootless Forgejo runner isolation plus fail-closed branch protection against
+- Isolated Forgejo Docker-in-Docker runner plus fail-closed branch protection against
   real Forgejo status names.
 - Three clean-Mac onboarding run, including a non-precreated login such as
   `sandokan`, replay/collision/interruption cases and controlled recovery.
