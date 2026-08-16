@@ -94,6 +94,13 @@ class RuntimeCompletion(unittest.TestCase):
   install=(ROOT/'install-vps.sh').read_text();service=(ROOT/'vps/agenticdev-enrollment.service').read_text()
   self.assertIn('systemctl enable --now agenticdev-enrollment.timer',install)
   self.assertIn('ExecStart=/usr/local/bin/agenticdev-ctl user sync',service)
+  self.assertIn('ProtectHome=false',service)
+  self.assertNotIn('ProtectHome=read-only',service)
+
+ def test_forgejo_bootstrap_does_not_default_to_reserved_admin(self):
+  install=(ROOT/'install-vps.sh').read_text()
+  self.assertIn('FORGEJO_ADMIN_USER:-agentic-admin',install)
+  self.assertNotIn('FORGEJO_ADMIN_USER:-admin}',install)
  def test_native_subscription_providers_replace_pi_runtime(self):
   docker=(ROOT/'pod/Dockerfile').read_text();harness=(ROOT/'pod/harness/harness.py').read_text();broker=(ROOT/'vps/broker.py').read_text();launcher=(ROOT/'launcher/agenticdev').read_text()
   self.assertIn('@anthropic-ai/claude-code @openai/codex',docker);self.assertNotIn('pi-coding-agent',docker)

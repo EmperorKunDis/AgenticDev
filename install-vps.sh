@@ -187,7 +187,7 @@ if [[ -f $ENVF ]]; then
   # shellcheck disable=SC1090
   set -a; . $ENVF; set +a
   DOMAIN="${AGENTICDEV_DOMAIN:-}"; ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-}"
-  ADMIN_USER="${FORGEJO_ADMIN_USER:-admin}"
+  ADMIN_USER="${FORGEJO_ADMIN_USER:-agentic-admin}"
   info "tajemství zůstávají, měnit je nebudu"
 else
   step "Nastavení — pár otázek, pak už nic"
@@ -213,7 +213,8 @@ else
   [[ "$ADMIN_NAME" == *" "* ]] || warn "jen jedno slovo? V auditní stopě to bude takhle."
   ask ADMIN_EMAIL "Tvůj e-mail (správce instance)" ""
   [[ -n "$ADMIN_EMAIL" ]] || die "e-mail je povinný — Forgejo bez něj admina nezaloží"
-  ask ADMIN_USER "Přihlašovací jméno do gitu" "admin"
+  # Forgejo 11 reserves the literal username "admin" and rejects bootstrap.
+  ask ADMIN_USER "Přihlašovací jméno do gitu" "agentic-admin"
 
   echo
   info "Dvě hesla. Vymysli si je teď, jinam se zapisovat nebudou."
