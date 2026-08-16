@@ -13,6 +13,7 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('runtime-host-check.sh',s);self.assertIn('zůstal v docker group',s);self.assertIn('zůstal v sudo group',s)
   self.assertIn('systemctl is-active --quiet agenticdev-broker.service',s);self.assertIn('broker socket má nebezpečná práva',s)
   self.assertIn('systemctl restart agenticdev-broker.service',s)
+  self.assertIn('chown -R 1000:1000 "$ROOT/data/runner"',s)
   self.assertNotIn('rm -rf /srv/agenticdev/workloads',s);self.assertNotIn('rm -rf /srv/agenticdev/repos',s)
  def test_smoke_rejects_privileged_human_accounts(self):
   s=(ROOT/'tools/smoke-vps.sh').read_text()
