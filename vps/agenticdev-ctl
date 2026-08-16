@@ -169,6 +169,7 @@ case "${1:-status}" in
         # skupin odstraní; jediným oprávněním je úzký broker socket.
         getent group docker >/dev/null && gpasswd -d "$LOGIN" docker >/dev/null 2>&1 || true
         getent group sudo >/dev/null && gpasswd -d "$LOGIN" sudo >/dev/null 2>&1 || true
+        loginctl terminate-user "$LOGIN" >/dev/null 2>&1 || true
         getent group agenticdev-broker >/dev/null || groupadd --system agenticdev-broker
         usermod -aG agenticdev-broker "$LOGIN"
 
