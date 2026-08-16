@@ -103,6 +103,21 @@ STEPS: list[tuple[str, str]] = [
         ALTER TABLE workstation ADD COLUMN IF NOT EXISTS login TEXT
         """,
     ),
+    (
+        "runtime boundary — membership a kill-switch epoch",
+        """
+        CREATE TABLE IF NOT EXISTS project_member (
+          project_id UUID NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+          principal_id UUID NOT NULL REFERENCES principal(id) ON DELETE CASCADE,
+          active BOOLEAN NOT NULL DEFAULT true,
+          PRIMARY KEY (project_id, principal_id)
+        );
+        ALTER TABLE platform_state ADD COLUMN IF NOT EXISTS epoch BIGINT NOT NULL DEFAULT 1
+        ;INSERT INTO project_member(project_id,principal_id)
+          SELECT p.id,pr.id FROM project p CROSS JOIN principal pr WHERE pr.active
+          ON CONFLICT (project_id,principal_id) DO NOTHING
+        """,
+    ),
 ]
 
 
