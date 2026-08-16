@@ -156,13 +156,11 @@ klíčem. Přihlášení mu zůstane v `~/.pi/agent` a platí dál
 Prostředí — skills, hooky, instrukce — chodí ze serveru a je pro všechny
 společné.
 
-> **Než přidáš prvního člověka, věz tohle.** Aby mohl spustit pod,
-> potřebuje být ve skupině `docker`, a to je na tomhle stroji rovnocenné
-> rootovi: přes Docker socket se dostane k `/srv/agenticdev/config/.env`,
-> tedy k podpisovému klíči a všem tajemstvím instance. Pro malý tým, který
-> si věří, je to snesitelné. **Nedávej účet na VPS nikomu, komu bys nedal
-> root** — externistovi, klientovi, juniorovi. Řešení (rootless Docker nebo
-> privilegovaný pomocník) hotové není.
+> Běžný účet nesmí být v `docker` ani `sudo`. Pod spouští root-owned broker
+> pouze z podepsaného Work Orderu; Git checkout, host cesty, image, síť a
+> limity určuje server. Instalace skončí, pokud host neumí cgroup v2,
+> seccomp a overlay2/XFS project quota. Před produkčním použitím proveď
+> runtime acceptance podle kapitoly níže.
 
 Registrační stránka s heslem (`JOIN_URL` z `agenticdev-info`) zůstává pro
 připojení stroje do tailnetu. Odkaz je veřejný, **heslo posílej zvlášť a
@@ -251,7 +249,7 @@ pracuje** — smoke test to nezjistí.
 
 Přihlas se jako obyčejný člověk, ne jako root: `tailscale ssh <login>@<vps>`
 
-- [ ] `agenticdev doctor` — všechno zelené, včetně přístupu k Dockeru
+- [ ] `agenticdev doctor` — všechno zelené, včetně přístupu k brokeru; Docker musí být nedostupný
 - [ ] `agenticdev` otevře výběr projektu
 - [ ] Pod naběhne a **Pi se zeptá na model** (poprvé `/login`)
 - [ ] Skills a `agenticdev-git` jsou načtené — v Pi zkus `/git-list`.
@@ -294,3 +292,46 @@ limitations](README.md#known-limitations) a [SECURITY.md](SECURITY.md).
 Nejdůležitější: mezi prací agenta a mergem **není serverová brána** —
 testy si pouští agent sám ve svém podu. Pro malý tým, který si věří, to
 stačí. Jako záruka kvality ne.
+
+## Runtime acceptance na čisté VPS
+
+Použij výhradně disposable izolovanou VPS. Připrav testovacího a druhého
+uživatele, signed Work Order a device JWT, potom:
+
+```bash
+export AGENTICDEV_ACCEPTANCE_DISPOSABLE=YES
+export ACCEPTANCE_USER=tester ACCEPTANCE_OTHER_USER=tester2
+export DEVICE_TOKEN='<JWT>' ACCEPTANCE_WORK_ORDER=/root/acceptance-work-order.json
+export ACCEPTANCE_CASE_DIR=/root/acceptance-cases
+sudo -E /srv/agenticdev/src/tools/acceptance-runtime.sh
+```
+
+Výstup používá jen `PASS`, `FAIL`, `SKIP`. Každý `SKIP` má důvod a jakýkoli
+`FAIL` vrací nenulový exit. Bez živého běhu není runtime boundary live-proven.
+
+Signed negativní fixtures vytvoř na disposable VPS z čerstvého, dosud
+nespotřebovaného raw Work Orderu:
+
+```bash
+set -a; source /srv/agenticdev/config/.env; set +a
+sudo -E /srv/agenticdev/src/tools/acceptance-prepare.py \
+  /root/acceptance-work-order.json /root/acceptance-cases
+```
+
+Revoked-workstation, missing-membership a kill-switch fixtures vyžadují řízenou
+změnu control-plane stavu testovací identity. Pokud je nepřipravíš, harness je
+správně označí `SKIP`, nikdy `PASS`. Po testu disposable VPS zahoď.
+
+Příklad získání raw Work Orderu pro výhradně testovací projekt s ready taskem:
+
+```bash
+sudo -u tester agenticdev login
+TOKEN=$(cat /home/tester/.agenticdev/token)
+curl -fsS 'http://127.0.0.1:8080/v1/work-orders/next?project=acceptance-runtime' \
+  -H "Authorization: Bearer $TOKEN" | jq -e .work_order \
+  >/root/acceptance-work-order.json
+export DEVICE_TOKEN=$TOKEN
+```
+
+Testovací principal musí mít přes `agenticdev-ctl access grant` přístup pouze k
+testovacímu projektu. Nepoužívej produkční task ani produkční Work Order.

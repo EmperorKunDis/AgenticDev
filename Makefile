@@ -1,5 +1,5 @@
 SHELL := /bin/bash
-.PHONY: help verify test-git dist check-dist clean preflight smoke
+.PHONY: help verify test test-git test-broker dist check-dist clean preflight smoke
 
 help:
 	@echo ""
@@ -30,6 +30,11 @@ verify:
 
 test-git:
 	@bash tools/test-git.sh
+
+test-broker:
+	@python3 -m unittest discover -s tests -v
+
+test: verify test-git test-broker
 
 dist:
 	@bash tools/mk-dist.sh

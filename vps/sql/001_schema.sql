@@ -82,6 +82,13 @@ CREATE TABLE workstation (
   revoked_at    timestamptz
 );
 
+CREATE TABLE project_member (
+  project_id   uuid NOT NULL REFERENCES project(id) ON DELETE CASCADE,
+  principal_id uuid NOT NULL REFERENCES principal(id) ON DELETE CASCADE,
+  active       boolean NOT NULL DEFAULT true,
+  PRIMARY KEY (project_id, principal_id)
+);
+
 -- ─── Verze runtime (kompatibilní matice) ───────────────────────
 CREATE TABLE harness_version (
   id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -252,5 +259,6 @@ CREATE TABLE platform_state (
   issuing_enabled boolean NOT NULL DEFAULT true,
   reason          text,
   updated_at      timestamptz NOT NULL DEFAULT now()
+  ,epoch          bigint NOT NULL DEFAULT 1
 );
 INSERT INTO platform_state (id) VALUES (1);
