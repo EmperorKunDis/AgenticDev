@@ -2,6 +2,7 @@ from __future__ import annotations
 import base64, importlib.util, json, os, sys, tempfile, unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 ROOT=Path(__file__).parents[1]
@@ -9,15 +10,16 @@ spec=importlib.util.spec_from_file_location('broker',ROOT/'vps/broker.py'); mod=
 P='11111111-1111-4111-8111-111111111111'; W='22222222-2222-4222-8222-222222222222'; T='33333333-3333-4333-8333-333333333333'; WO='44444444-4444-4444-8444-444444444444'
 class Boundary(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name); (self.root/'workloads').mkdir(); os.environ['AGENTICDEV_WORK_ROOT']=str(self.root/'workloads'); os.environ['AGENTICDEV_BROKER_STATE']=str(self.root/'state')
+  self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name); (self.root/'workloads').mkdir(); (self.root/'repos').mkdir()
+  self.env=mock.patch.dict(os.environ,{'AGENTICDEV_WORK_ROOT':str(self.root/'workloads'),'AGENTICDEV_REPO_ROOT':str(self.root/'repos'),'AGENTICDEV_BROKER_STATE':str(self.root/'state')},clear=False); self.env.start()
   self.private=Ed25519PrivateKey.generate(); public=self.private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw); self.plans=[]
-  self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':1000,'pw_gid':1000,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}
+  self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':1000,'pw_gid':1000,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}; self.b._chown_tree=lambda *args:None
  def fake_git(self,cmd):
   if 'clone' not in cmd:return
   target=Path(cmd[-1]); target.mkdir(parents=True,exist_ok=True)
   if '--mirror' in cmd:(target/'HEAD').write_text('ref: refs/heads/main')
   else:(target/'.git').mkdir(exist_ok=True)
- def tearDown(self): self.b.state.db.close(); self.tmp.cleanup()
+ def tearDown(self): self.b.state.db.close(); self.env.stop(); self.tmp.cleanup()
  @staticmethod
  def ts(d): return datetime.fromtimestamp(2_000_000_000+d,timezone.utc).isoformat()
  def manifest(self,**changes):
