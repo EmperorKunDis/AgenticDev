@@ -1,0 +1,1 @@
+{"name":"fixture-node","scripts":{"test":"node --test","lint":"echo lint"}}

@@ -13,7 +13,8 @@ from datetime import datetime, timedelta, timezone
 import jwt
 import httpx
 import psycopg
-from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
+from cryptography.hazmat.primitives import serialization
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey, Ed25519PublicKey
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, Response
 from psycopg.rows import dict_row
@@ -22,7 +23,6 @@ from pydantic import BaseModel
 DB          = os.environ["DATABASE_URL"]
 JWT_SECRET  = os.environ["JWT_SECRET"]
 GIT_BASE    = os.environ.get("GIT_BASE", "ssh://git@localhost:2222")
-DEF_MODEL   = os.environ.get("DEFAULT_MODEL", "gpt-5.5")
 LEASE_HOURS = int(os.environ.get("LEASE_HOURS", "4"))
 INSTANCE_ID = os.environ.get("AGENTICDEV_INSTANCE_ID", "")
 BROKER_SECRET = os.environ.get("BROKER_SECRET", "")
@@ -76,9 +76,14 @@ def now() -> datetime:
 # ═══════════════════════════════════════════════════════════════
 #  Auth
 # ═══════════════════════════════════════════════════════════════
-class DeviceAuth(BaseModel):
+class DeviceChallenge(BaseModel):
     hostname: str
     device_key_fp: str
+
+
+class DeviceProof(BaseModel):
+    challenge_id: str
+    signature: str
 
 
 def current_ws(authorization: str = Header(...)) -> dict:
@@ -98,27 +103,51 @@ def current_ws(authorization: str = Header(...)) -> dict:
     return ws
 
 
-@app.post("/v1/auth/device")
-def auth_device(body: DeviceAuth):
-    """Stanice se prokáže fingerprintem svého device key."""
+@app.post("/v1/auth/device/challenge")
+def auth_device_challenge(body: DeviceChallenge):
+    """Issue a short-lived challenge; a fingerprint alone is never authentication."""
+    nonce = secrets.token_urlsafe(48)
     with db() as c:
         ws = c.execute(
-            "SELECT * FROM workstation WHERE device_key_fp = %s",
-            (body.device_key_fp,),
+            "SELECT * FROM workstation WHERE device_key_fp=%s AND hostname=%s",
+            (body.device_key_fp, body.hostname),
         ).fetchone()
-        if not ws:
-            raise HTTPException(
-                403,
-                "neznámý device key — zaregistruj stanici přes `agenticdev admin register-ws`",
-            )
-        if ws["revoked_at"]:
-            raise HTTPException(403, "stanice revokována")
-        c.execute("UPDATE workstation SET last_seen_at = now() WHERE id = %s", (ws["id"],))
+        if not ws or ws["revoked_at"] or not ws.get("device_public_key"):
+            raise HTTPException(403, "stanice nemá platnou proof-of-possession identitu")
+        row = c.execute("""INSERT INTO device_challenge(workstation_id,nonce,expires_at)
+                           VALUES (%s,%s,%s) RETURNING id,expires_at""",
+                        (ws["id"], nonce, now()+timedelta(minutes=2))).fetchone()
+    return {"challenge_id": str(row["id"]), "nonce": nonce, "expires_at": row["expires_at"]}
+
+
+@app.post("/v1/auth/device")
+def auth_device(body: DeviceProof):
+    """Consume a challenge after an Ed25519 proof; replay is rejected atomically."""
+    try: signature = base64.b64decode(body.signature, validate=True)
+    except Exception as e: raise HTTPException(403, "neplatný podpis") from e
+    with db() as c:
+        row = c.execute("""SELECT dc.*,w.* FROM device_challenge dc
+                           JOIN workstation w ON w.id=dc.workstation_id
+                           WHERE dc.id=%s FOR UPDATE""", (body.challenge_id,)).fetchone()
+        if (not row or row["used_at"] or row["expires_at"] <= now() or row["revoked_at"] or
+                not row.get("device_public_key")):
+            raise HTTPException(403, "challenge expirovala nebo už byla použita")
+        try:
+            key = serialization.load_ssh_public_key(row["device_public_key"].encode())
+            if not isinstance(key, Ed25519PublicKey): raise ValueError("not Ed25519")
+            key.verify(signature, row["nonce"].encode())
+        except Exception as e:
+            raise HTTPException(403, "stanice neprokázala držení soukromého klíče") from e
+        used = c.execute("""UPDATE device_challenge SET used_at=now()
+                            WHERE id=%s AND used_at IS NULL RETURNING id""",
+                         (body.challenge_id,)).fetchone()
+        if not used: raise HTTPException(403, "challenge replay")
+        c.execute("UPDATE workstation SET last_seen_at=now() WHERE id=%s", (row["workstation_id"],))
     token = jwt.encode(
-        {"ws": str(ws["id"]), "exp": now() + timedelta(hours=LEASE_HOURS)},
+        {"ws": str(row["workstation_id"]), "exp": now() + timedelta(hours=LEASE_HOURS)},
         JWT_SECRET, algorithm="HS256",
     )
-    return {"token": token, "expires_in": LEASE_HOURS * 3600, "channel": ws["channel"]}
+    return {"token": token, "expires_in": LEASE_HOURS * 3600, "channel": row["channel"]}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -180,11 +209,28 @@ def _build_context_bundle(c, project: dict, task: dict) -> dict:
 
 
 @app.get("/v1/work-orders/next")
-def next_work_order(project: str, ws: dict = Depends(current_ws)):
+def next_work_order(project: str, provider: str, analysis: bool = False,
+                    ws: dict = Depends(current_ws)):
+    if provider not in {"claude", "codex"}:
+        raise HTTPException(400, "provider musí být claude nebo codex")
     with db() as c:
         state = c.execute("SELECT * FROM platform_state WHERE id = 1").fetchone()
         if not state["issuing_enabled"]:
             raise HTTPException(503, f"kill switch aktivní: {state['reason']}")
+        profile = c.execute(
+            "SELECT auth_status FROM provider_profile WHERE principal_id=%s AND provider=%s",
+            (ws["principal_id"], provider)).fetchone()
+        if not profile or profile["auth_status"] != "ready":
+            raise HTTPException(409, "AUTH_REQUIRED")
+        approved = c.execute(
+            """SELECT 1 FROM project p JOIN repository_analysis ra ON ra.project_id=p.id
+               WHERE p.code=%s AND p.analysis_status='ready' AND ra.state='ready'
+                 AND ra.approved_at IS NOT NULL
+                 AND ra.id=(SELECT id FROM repository_analysis WHERE project_id=p.id
+                            ORDER BY updated_at DESC LIMIT 1)""",
+            (project,)).fetchone()
+        if not analysis and not approved:
+            raise HTTPException(409, "ANALYSIS_REQUIRED")
 
         # atomický výběr úkolu — SKIP LOCKED brání souběžnému přidělení
         task = c.execute(
@@ -195,8 +241,11 @@ def next_work_order(project: str, ws: dict = Depends(current_ws)):
                JOIN project_member pm ON pm.project_id=pr.id
                WHERE t.state = 'ready' AND pr.active AND p.active
                  AND pr.code=%s AND pm.principal_id=%s AND pm.active
+                 AND ((%s AND t.kind='repository-analysis') OR
+                      (NOT %s AND t.kind<>'repository-analysis'))
                ORDER BY t.priority, t.created_at
-               FOR UPDATE OF t SKIP LOCKED LIMIT 1""", (project, ws["principal_id"])
+               FOR UPDATE OF t SKIP LOCKED LIMIT 1""",
+            (project, ws["principal_id"], analysis, analysis)
         ).fetchone()
         if not task:
             return {"work_order": None, "reason": "žádný úkol ve stavu ready"}
@@ -215,7 +264,9 @@ def next_work_order(project: str, ws: dict = Depends(current_ws)):
         c.execute("UPDATE task SET state = 'assigned' WHERE id = %s", (task["task_id"],))
 
         bundle = _build_context_bundle(c, task, task)
-        models = task["model_allowlist"] or [DEF_MODEL]
+        configured_model = os.environ.get(
+            "CLAUDE_MODEL_POLICY" if provider == "claude" else "CODEX_MODEL_POLICY", "").strip()
+        models = task["model_allowlist"] or ([configured_model] if configured_model else [])
 
         unix_user = ws.get("login")
         if not unix_user:
@@ -252,11 +303,14 @@ def next_work_order(project: str, ws: dict = Depends(current_ws)):
             "context_bundle": bundle,
             "runtime": {
                 "template": "agent-pod-v1",
+                "provider": provider,
+                "mode": "analysis" if analysis else "work",
                 "limits": {"cpus": "2", "memory_mb": 4096, "pids": 512,
                            "wall_seconds": 14400, "disk_mb": 10240},
             },
             "worker_pool": [
-                {"role": r, "profile": f"{r}@0.1.0"}
+                {"role": r, "profile": f"{r}@0.1.0", "budget_tokens": 20_000,
+                 "output_schema": "agenticdev.worker-report/v1"}
                 for r in ("architect", "implementer", "tester", "reviewer")
             ],
             "policy": {
@@ -555,11 +609,13 @@ from .admin import router as _admin_router                       # noqa: E402
 from .workspace import router as _ws_router                       # noqa: E402
 from .enroll import router as _enroll_router                      # noqa: E402
 from .hooks import router as _hooks_router                        # noqa: E402
+from .repository import router as _repository_router              # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_ws_router)
 app.include_router(_enroll_router)
 app.include_router(_hooks_router)
+app.include_router(_repository_router)
 
 
 @app.on_event("startup")

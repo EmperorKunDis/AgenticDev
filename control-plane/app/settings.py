@@ -29,17 +29,13 @@ from .main import db, now
 # key: (skupina, popisek, typ, tajné?, nápověda)
 EDITABLE: dict[str, tuple[str, str, str, bool, str]] = {
     # ─── modely ───────────────────────────────────────────────
-    "MODEL_BACKEND":    ("modely", "Dodavatel", "select:openai,anthropic,ollama", False,
-                         "Určuje tvar API. Po změně zkontroluj adresu i model."),
-    "MODEL_BASE_URL":   ("modely", "Adresa API", "text", False,
-                         "Např. https://api.openai.com/v1"),
-    "MODEL_API_KEY":    ("modely", "API klíč", "text", True,
-                         "U Ollamy nech prázdné."),
-    "DEFAULT_MODEL":    ("modely", "Výchozí model", "text", False,
-                         "Použije se pro projekty bez vlastního nastavení."),
-    "LOCAL_MODEL":      ("modely", "Lokální model", "text", False,
-                         "Pro projekty označené data_class: restricted."),
-    "MODEL_MAX_TOKENS": ("modely", "Strop tokenů", "number", False,
+    "PROVIDER_ALLOWLIST": ("modely", "Povolené subscription CLI", "text", False,
+                            "Výchozí: claude,codex. Neobsahuje credentials."),
+    "CLAUDE_MODEL_POLICY": ("modely", "Claude model policy", "text", False,
+                             "Prázdné = model spravuje osobní Claude subscription."),
+    "CODEX_MODEL_POLICY":  ("modely", "Codex model policy", "text", False,
+                             "Prázdné = model spravuje osobní ChatGPT subscription."),
+    "MODEL_MAX_TOKENS": ("modely", "Strop kontextu", "number", False,
                          "Překročení je tvrdý fail, ne tiché ořezání."),
 
     # ─── síť ──────────────────────────────────────────────────
@@ -52,8 +48,7 @@ EDITABLE: dict[str, tuple[str, str, str, bool, str]] = {
                              "„workflow / job (událost)\", proto výchozí „test / *\". "
                              "Skutečný tvar ukáže: agenticdev-ctl gate <projekt>."),
     "MERGE_GATE_APPROVALS": ("brana", "Kolik lidí musí PR odkliknout", "number", False,
-                             "Nula = kód se smerguje, aniž ho někdo přečetl. "
-                             "Když autoři nejsou programátoři, dej aspoň 1."),
+                             "Minimum je 1; nižší hodnota se při nasazení brány zvýší na 1."),
 
     # ─── přístup ──────────────────────────────────────────────
     "DASHBOARD_TOKEN":  ("pristup", "Heslo do panelu", "password", True,

@@ -151,6 +151,30 @@ case "${1:-status}" in
     # sessions. Privilegovanou část dělá root tady, jednou na člověka.
     [[ $EUID -eq 0 ]] || die "tohle musí root: sudo agenticdev-ctl user $*"
     case "${2:-}" in
+      sync)
+        api_login
+        trap 'rm -f "$JAR"' EXIT
+        pending=$(curl -fsS -b "$JAR" "$API/v1/enrollments") \
+          || die "frontu registrací se nepodařilo načíst"
+        printf '%s' "$pending" | jq -c '.[] | select(.state == "pending" and .login != null)' | while read -r row; do
+          eid=$(jq -r .id <<<"$row"); login=$(jq -r .login <<<"$row")
+          name=$(jq -r '[.first_name,.last_name]|join(" ")' <<<"$row")
+          mail=$(jq -r .email <<<"$row"); key=$(jq -r .ssh_public_key <<<"$row")
+          if id "$login" >/dev/null 2>&1; then
+            home=$(getent passwd "$login" | cut -d: -f6)
+            if ! grep -qxF "$key" "$home/.ssh/authorized_keys" 2>/dev/null; then
+              dc exec -T postgres psql -U agenticdev -d agenticdev -v id="$eid" \
+                -c "UPDATE enrollment SET state='failed',error='login patří jinému klíči' WHERE id=:'id'" >/dev/null
+              continue
+            fi
+          fi
+          "$0" user add "$login" "$name" "$mail" >/dev/null
+          keys_add "$login" "$key" >/dev/null
+          dc exec -T postgres psql -U agenticdev -d agenticdev -v id="$eid" \
+            -c "UPDATE enrollment SET state='ready',claimed_at=now(),claimed_by='enrollment-worker',error=NULL WHERE id=:'id'" >/dev/null
+          printf "${G}  ✓${O} %s\n" "$login"
+        done
+        ;;
       add)
         LOGIN="${3:-}"
         [[ -n "$LOGIN" ]] || die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail]"
@@ -175,6 +199,7 @@ case "${1:-status}" in
 
         HOME_DIR=$(getent passwd "$LOGIN" | cut -d: -f6)
         install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.agenticdev"
+        install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.claude" "$HOME_DIR/.codex"
         install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.pi" "$HOME_DIR/.pi/agent"
 
         # Device key té osoby. Identita v ledgeru je člověk na tomhle VPS,
@@ -203,9 +228,9 @@ CFGEOF
         RESP=$(curl -fsS -X POST "http://${VPS_HOST}:8080/v1/workstations/register" \
           -H 'content-type: application/json' \
           -d "$(jq -nc --arg t "$JOIN_TOKEN" --arg h "$LOGIN@$(hostname -s 2>/dev/null || hostname)" \
-                --arg f "$FP" --arg n "$FULL" --arg e "$MAIL" \
+                --arg f "$FP" --arg d "$(cat "$KEYF.pub")" --arg n "$FULL" --arg e "$MAIL" \
                 --arg k "$(cat "$SSHK.pub")" --arg l "$LOGIN" \
-                '{join_token:$t,hostname:$h,device_key_fp:$f,display_name:$n,email:$e,ssh_public_key:$k,login:$l}')" \
+                '{join_token:$t,hostname:$h,device_key_fp:$f,device_public_key:$d,display_name:$n,email:$e,ssh_public_key:$k,login:$l}')" \
           2>/dev/null) || die "registrace u control plane selhala"
         jq -e .workstation_id >/dev/null <<<"$RESP" || die "server odmítl: $RESP"
         printf "${G}  ✓${O} zaregistrováno jako %s <%s>\n" "$FULL" "$MAIL"
@@ -256,7 +281,7 @@ CFGEOF
         done
         echo
         ;;
-      *) die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail] | user list | user pending" ;;
+      *) die "použití: agenticdev-ctl user add <login> [\"Jméno Příjmení\"] [e-mail] | user sync | user list | user pending" ;;
     esac
     ;;
 
@@ -311,12 +336,13 @@ CFGEOF
     [[ "${2:-}" == "grant" && -n "${3:-}" && -n "${4:-}" ]] \
       || die "použití: agenticdev-ctl access grant <login> <projekt>"
     LOGIN=$3; CODE=$4
-    dc exec -T postgres psql -v ON_ERROR_STOP=1 -U agenticdev -d agenticdev \
-      -v login="$LOGIN" -v code="$CODE" -c \
+    printf '%s\n' \
       "INSERT INTO project_member(project_id,principal_id)
        SELECT p.id,w.principal_id FROM project p JOIN workstation w ON w.login=:'login'
        WHERE p.code=:'code' AND p.active AND w.revoked_at IS NULL
-       ON CONFLICT(project_id,principal_id) DO UPDATE SET active=true" >/dev/null
+       ON CONFLICT(project_id,principal_id) DO UPDATE SET active=true;" \
+      | dc exec -T postgres psql -v ON_ERROR_STOP=1 -U agenticdev -d agenticdev \
+          -v login="$LOGIN" -v code="$CODE" >/dev/null
     echo "✓ $LOGIN smí pracovat na $CODE"
     ;;
 

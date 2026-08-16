@@ -24,16 +24,6 @@ MARKER='#__AGENTICDEV_PAYLOAD_BELOW__'
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git -C "$ROOT" log -1 --pretty=%ct 2>/dev/null || echo 1700000000)}"
 export SOURCE_DATE_EPOCH
 
-# Co do balíčku NEPATŘÍ.
-EXCLUDES=(
-  --exclude='./.git'          --exclude='./.github'
-  --exclude='./dist'          --exclude='./data'
-  --exclude='./.env'          --exclude='./*.key'
-  --exclude='./*.pem'         --exclude='./secrets'
-  --exclude='./.venv'         --exclude='./__pycache__'
-  --exclude='*.pyc'           --exclude='./.wo-cache'
-)
-
 [[ -f "$STUB" ]] || { echo "✗ chybí $STUB" >&2; exit 1; }
 grep -q "^${MARKER}\$" "$STUB" \
   || { echo "✗ v $STUB chybí značka $MARKER" >&2; exit 1; }
@@ -41,20 +31,13 @@ grep -q "^${MARKER}\$" "$STUB" \
 echo "▸ Build"
 rm -rf "$DIST"; mkdir -p "$DIST"
 
-# Payload. `--sort=name` + pevný mtime/uid/gid = stejný bajt pokaždé.
-tar --sort=name \
-    --mtime="@${SOURCE_DATE_EPOCH}" \
-    --owner=0 --group=0 --numeric-owner \
-    --format=gnu \
-    "${EXCLUDES[@]}" \
-    -cf "$DIST/payload.tar" -C "$ROOT" . 2>/dev/null
-
-gzip -n -9 -c "$DIST/payload.tar" > "$DIST/payload.tar.gz"
-rm -f "$DIST/payload.tar"
+# Python tarfile dává stejný výstup na GNU/Linux i macOS/BSD.
+AGENTICDEV_PAYLOAD_ROOT="$ROOT" AGENTICDEV_PAYLOAD_OUT="$DIST/payload.tar.gz" \
+  python3 "$ROOT/tools/build-payload.py"
 
 # Hlavička = stub až po značku včetně, pak base64 payload.
 awk -v m="$MARKER" '$0==m{print; exit} {print}' "$STUB" > "$OUT"
-base64 -w0 "$DIST/payload.tar.gz" >> "$OUT"
+base64 < "$DIST/payload.tar.gz" | tr -d '\n' >> "$OUT"
 printf '\n' >> "$OUT"
 rm -f "$DIST/payload.tar.gz"
 chmod +x "$OUT"
@@ -62,7 +45,7 @@ chmod +x "$OUT"
 # Kontroly, ať nevydáme rozbitý soubor.
 bash -n "$OUT" || { echo "✗ vygenerovaný soubor se neparsuje" >&2; exit 1; }
 
-( cd "$DIST" && sha256sum agenticdev-install-vps.sh > agenticdev-install-vps.sh.sha256 )
+( cd "$DIST" && shasum -a 256 agenticdev-install-vps.sh > agenticdev-install-vps.sh.sha256 )
 
 SIZE=$(wc -c < "$OUT")
 SUM=$(cut -d' ' -f1 < "$DIST/agenticdev-install-vps.sh.sha256")

@@ -10,8 +10,8 @@ spec=importlib.util.spec_from_file_location('broker',ROOT/'vps/broker.py'); mod=
 P='11111111-1111-4111-8111-111111111111'; W='22222222-2222-4222-8222-222222222222'; T='33333333-3333-4333-8333-333333333333'; WO='44444444-4444-4444-8444-444444444444'
 class Boundary(unittest.TestCase):
  def setUp(self):
-  self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name); (self.root/'workloads').mkdir(); (self.root/'repos').mkdir()
-  self.env=mock.patch.dict(os.environ,{'AGENTICDEV_WORK_ROOT':str(self.root/'workloads'),'AGENTICDEV_REPO_ROOT':str(self.root/'repos'),'AGENTICDEV_BROKER_STATE':str(self.root/'state')}); self.env.start()
+  self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name); (self.root/'workloads').mkdir(); (self.root/'repos').mkdir(); (self.root/'home').mkdir()
+  self.env=mock.patch.dict(os.environ,{'AGENTICDEV_WORK_ROOT':str(self.root/'workloads'),'AGENTICDEV_REPO_ROOT':str(self.root/'repos'),'AGENTICDEV_BROKER_STATE':str(self.root/'state'),'AGENTICDEV_IDENTITY_ROOT':str(self.root/'identities')}); self.env.start()
   self.chown_patcher=mock.patch.object(mod.os,'chown'); self.chown=self.chown_patcher.start()
   self.private=Ed25519PrivateKey.generate(); public=self.private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw); self.plans=[]
   self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':1000,'pw_gid':1000,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}
@@ -25,7 +25,7 @@ class Boundary(unittest.TestCase):
  @staticmethod
  def ts(d): return datetime.fromtimestamp(2_000_000_000+d,timezone.utc).isoformat()
  def manifest(self,**changes):
-  m={'schema':'agenticdev.work-order/v1','issuer':'instance','key_id':'primary','work_order_id':WO,'nonce':'unique-nonce','issued_at':self.ts(-60),'not_before':self.ts(-5),'expires_at':self.ts(3600),'kill_epoch':7,'subject':{'principal_id':P,'workstation_id':W,'unix_user':'alice'},'task':{'id':T,'project':'alpha','phase':'implementation','kind':'feature','title':'test','risk_class':'standard','spec_ref':None,'dod':[]},'repo':{'url':'ssh://ignored','base_ref':'main','work_branch':'task/33333333/wip','write_scope':['src']},'runtime':{'template':'agent-pod-v1','limits':{'cpus':'2','memory_mb':4096,'pids':256,'wall_seconds':3600,'disk_mb':1024}},'policy':{'egress_allowlist':['api.example.test']}}
+  m={'schema':'agenticdev.work-order/v1','issuer':'instance','key_id':'primary','work_order_id':WO,'nonce':'unique-nonce','issued_at':self.ts(-60),'not_before':self.ts(-5),'expires_at':self.ts(3600),'kill_epoch':7,'subject':{'principal_id':P,'workstation_id':W,'unix_user':'alice'},'task':{'id':T,'project':'alpha','phase':'implementation','kind':'feature','title':'test','risk_class':'standard','spec_ref':None,'dod':[]},'repo':{'url':'ssh://ignored','base_ref':'main','work_branch':'task/33333333/wip','write_scope':['src']},'runtime':{'template':'agent-pod-v1','provider':'codex','mode':'work','limits':{'cpus':'2','memory_mb':4096,'pids':256,'wall_seconds':3600,'disk_mb':1024}},'policy':{'egress_allowlist':['api.example.test']}}
   m.update(changes); m['signature']='ed25519:'+base64.b64encode(self.private.sign(mod.canonical(m))).decode(); return m
  def authorize(self,path,body,token):
   if path.endswith('audit'): return {'ok':True}
@@ -65,12 +65,26 @@ class Boundary(unittest.TestCase):
  def test_control_plane_unavailable_rejected(self): self.deny_online(); self.reject(self.manifest(),'control_plane_unavailable_or_denied')
  def test_forbidden_runtime_inputs(self):
   for k in ('host_path','mounts','image','command','environment','network','docker_flags'): self.reject(self.manifest(**{k:'/etc'}),'forbidden_runtime_input')
+ def test_analysis_mode_is_read_only_and_mounts_only_selected_credentials(self):
+  m=self.manifest();m['runtime']['mode']='analysis';m['repo']['write_scope']=[];m['signature']='ed25519:'+base64.b64encode(self.private.sign(mod.canonical(m))).decode()
+  self.assertTrue(self.call(m)['ok']);flat='\n'.join(' '.join(c) for c in self.plans[0]);self.assertIn('/.codex,dst=/home/node/.codex',flat);self.assertNotIn('/home/node/.claude',flat)
+ def test_analysis_mode_rejects_write_scope(self):
+  m=self.manifest();m['runtime']['mode']='analysis';m['signature']='ed25519:'+base64.b64encode(self.private.sign(mod.canonical(m))).decode();self.reject(m,'analysis_write_scope_denied')
  def test_traversal(self):
   m=self.manifest(); m['repo']['write_scope']=['../etc']; m['signature']='ed25519:'+base64.b64encode(self.private.sign(mod.canonical(m))).decode(); self.reject(m,'unsafe_scope')
  def test_symlink_escape(self):
   (self.root/'workloads'/P).symlink_to('/tmp'); self.reject(self.manifest(),'symlink_escape')
+ def test_workspace_bundle_parent_symlink_escape(self):
+  outside=self.root/'outside';outside.mkdir();self.b._get=lambda p,t:{'project':{'code':'alpha','phase':'implementation'},'files':{'bin/tool':'owned'}}
+  original=self.fake_git
+  def malicious(cmd):
+   original(cmd)
+   if 'clone' in cmd and '--mirror' not in cmd:
+    work=Path(cmd[-1]);(work/'bin').symlink_to(outside)
+  self.b.git_runner=malicious;self.reject(self.manifest(),'symlink_escape');self.assertFalse((outside/'tool').exists())
  def test_runtime_hardening_limits_mount_and_proxy(self):
-  self.assertTrue(self.call(self.manifest())['ok']); flat='\n'.join(' '.join(c) for c in self.plans[0])
+  self.assertTrue(self.call(self.manifest())['ok']); plan=self.plans[0];flat='\n'.join(' '.join(c) for c in plan)
+  pod=plan[-1];entry=pod.index('--entrypoint');self.assertEqual(pod[entry:entry+3],['--entrypoint','sleep','agenticdev/pod:installed'])
   for x in ('--user 1000:1000','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HTTP_PROXY=http://egress:8888','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
   for x in ('/srv/agenticdev/config','/etc','/var/run/docker.sock','--privileged','--pid=host','--network=host'): self.assertNotIn(x,flat)
   self.assertNotIn('docker cp',flat);self.assertNotIn('docker exec --user 0',flat)
@@ -105,13 +119,14 @@ class Boundary(unittest.TestCase):
    with self.assertRaisesRegex(mod.Reject,'request_timeout'):mod.recv_request(left,0.01)
   finally:left.close();right.close()
  def test_pod_network_is_internal_and_proxy_mandatory(self):
-  flat=self.plan_text(); self.assertIn("network create --internal",flat); self.assertIn("HTTP_PROXY=http://egress:8888",flat); self.assertNotIn("--network host",flat)
+  flat=self.plan_text(); self.assertIn("network create --internal",flat); self.assertIn("HTTP_PROXY=http://egress:8888",flat); self.assertIn("--user 100:101",flat); self.assertNotIn("--network host",flat)
  def test_narrow_protocol(self): self.reject(self.manifest(),'narrow_protocol_violation',extra={'command':'sh'})
  def test_audit_start_stop(self):
   self.call(self.manifest()); self.assertEqual([json.loads(x)['verb'] for x in (self.root/'audit.jsonl').read_text().splitlines()],['created','start','running'])
  def test_provision_is_reentrant_and_bound_to_identity(self):
   m=self.manifest(); a=self.authorize('/v1/broker/authorize',{'work_order':m},'jwt')
-  first=self.b.provision(m,a,'jwt'); second=self.b.provision(m,a,'jwt'); self.assertEqual(first,second)
+  first=self.b.provision(m,a,'jwt'); marker=first/'.agenticdev-worktree.json'; before=(marker.read_bytes(),marker.stat().st_mode & 0o777,marker.stat().st_mtime_ns)
+  second=self.b.provision(m,a,'jwt'); self.assertEqual(first,second);self.assertEqual((marker.read_bytes(),marker.stat().st_mode & 0o777,marker.stat().st_mtime_ns),before)
   identity=json.loads((first/'.agenticdev-worktree.json').read_text()); self.assertEqual(identity['task'],T); self.assertEqual(identity['principal'],P)
  def test_cross_task_gets_distinct_worktree(self):
   m=self.manifest(); a=self.authorize('/v1/broker/authorize',{'work_order':m},'jwt'); first=self.b.provision(m,a,'jwt')

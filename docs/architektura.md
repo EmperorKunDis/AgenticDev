@@ -882,3 +882,9 @@ Za den zjistíš dvě věci, které se z návrhu vyčíst nedají:
 - kde jsou brány, které bys skutečně chtěl mít lidské (na papíře jich navrhneš míň, než v praxi potřebuješ)
 
 Teprve pak stav F0. Většina interních platforem umře na tom, že se postaví dřív, než někdo ověřil, že řeší reálný problém.
+# Historický architektonický návrh
+
+> Tento dokument není autoritativní popis aktuální implementace. Samostatně
+> distribuované directors nahradilo rozhodnutí ADR-0003 a runtime na stanici
+> nahradily ADR-0005 a ADR-0008. Pro aktuální readiness stav začni v
+> `GAP_ANALYSIS.md` a ověř tvrzení proti spustitelnému kódu.

@@ -1,0 +1,10 @@
+{
+  "schema": "agenticdev.skill-provenance/v1",
+  "upstream": "https://github.com/mattpocock/skills",
+  "commit": "068b6e0c62393147daf03530149cdce209c93da8",
+  "license": "MIT",
+  "copyright": "Copyright (c) 2026 Matt Pocock",
+  "adapted": ["diagnosing-bugs", "tdd", "codebase-design", "code-review", "research", "writing-for-agents", "domain-modeling"],
+  "excluded": ["setup", "wizard", "generic-git", "issue-workflow", "resolving-merge-conflicts", "experimental"],
+  "local_changes": "Provider-neutral rewrite; AgenticDev approval, scope, citation, audit, and broker constraints added. No automatic upstream updates."
+}

@@ -179,26 +179,58 @@ fi
 
 # ═══ 7. Work order ═════════════════════════════════════════════
 hdr "Vydání work orderu"
-FPRINT="SHA256:smoke$(date +%s)"
+SMOKE_KEY=$(mktemp); rm -f "$SMOKE_KEY"; ssh-keygen -q -t ed25519 -N '' -f "$SMOKE_KEY"
+FPRINT=$(ssh-keygen -lf "$SMOKE_KEY.pub" | awk '{print $2}')
+DEVICE_PUBLIC=$(cat "$SMOKE_KEY.pub")
 REG=$(curl -sS --max-time 15 -X POST "$API/v1/workstations/register" \
       -H 'content-type: application/json' \
-      -d "$(printf '{"join_token":"%s","hostname":"smoke-test","device_key_fp":"%s","display_name":"Smoke Test"}' \
-            "${JOIN_TOKEN:-}" "$FPRINT")" 2>/dev/null)
+      -d "$(jq -nc --arg j "${JOIN_TOKEN:-}" --arg f "$FPRINT" --arg d "$DEVICE_PUBLIC" \
+            '{join_token:$j,hostname:"smoke-test",device_key_fp:$f,device_public_key:$d,display_name:"Smoke Test",login:"smoke-test"}')" 2>/dev/null)
 WSID=$(printf '%s' "$REG" | sed -n 's/.*"workstation_id"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 if [[ -z "$WSID" ]]; then
   bad "zkušební stanici nešlo zaregistrovat: $(printf '%s' "$REG" | head -c 120)"
 else
   ok "zkušební stanice zaregistrovaná"
+  CHALLENGE=$(curl -sS --max-time 10 -X POST "$API/v1/auth/device/challenge" -H 'content-type: application/json' \
+        -d "$(jq -nc --arg f "$FPRINT" '{hostname:"smoke-test",device_key_fp:$f}')" 2>/dev/null)
+  SIGNATURE=$(python3 - "$SMOKE_KEY" "$(jq -r .nonce <<<"$CHALLENGE")" <<'PY'
+import base64,sys
+from cryptography.hazmat.primitives import serialization
+k=serialization.load_ssh_private_key(open(sys.argv[1],'rb').read(),password=None)
+print(base64.b64encode(k.sign(sys.argv[2].encode())).decode())
+PY
+)
   TOK=$(curl -sS --max-time 10 -X POST "$API/v1/auth/device" -H 'content-type: application/json' \
-        -d "$(printf '{"hostname":"smoke-test","device_key_fp":"%s"}' "$FPRINT")" 2>/dev/null \
+        -d "$(jq -nc --arg c "$(jq -r .challenge_id <<<"$CHALLENGE")" --arg s "$SIGNATURE" '{challenge_id:$c,signature:$s}')" 2>/dev/null \
         | sed -n 's/.*"token"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+  rm -f "$SMOKE_KEY" "$SMOKE_KEY.pub"
   [[ -n "$TOK" ]] && ok "stanice se přihlásí device keyem" || bad "přihlášení stanice selhalo"
 
   if [[ -n "$TOK" ]]; then
-    WO=$(curl -sS --max-time 15 "$API/v1/work-orders/next" -H "Authorization: Bearer $TOK" 2>/dev/null)
+    PROJ=$(curl -fsS --max-time 10 "$API/v1/workspace/projects" -H "Authorization: Bearer $TOK" 2>/dev/null \
+      | python3 -c "import json,sys;p=json.load(sys.stdin).get('projects') or [];print(p[0]['code'] if p else '')" 2>/dev/null || true)
+    if [[ -z "$PROJ" ]]; then
+      warn "stanice nemá přiřazený projekt — work order nezkusím"
+      WO='{"work_order":null}'
+    else
+      # Podepsaný Work Order je fail-closed za provider i analysis gate.
+      # Smoke fixture proto explicitně vytvoří oba schválené předpoklady;
+      # produkční tok je získá OAuth loginem a lidským approval.
+      dc exec -T postgres psql -U agenticdev -d agenticdev >/dev/null <<SQL
+INSERT INTO provider_profile(principal_id,provider,auth_status,last_verified_at)
+SELECT principal_id,'codex','ready',now() FROM workstation WHERE hostname='smoke-test'
+ON CONFLICT(principal_id,provider) DO UPDATE SET auth_status='ready',last_verified_at=now();
+INSERT INTO repository_analysis(project_id,commit_sha,analyzer_version,state,approved_at,approved_by)
+SELECT p.id,repeat('0',40),'smoke/fixture','ready',now(),w.principal_id
+FROM project p CROSS JOIN workstation w WHERE p.code='$PROJ' AND w.hostname='smoke-test'
+ON CONFLICT(project_id,commit_sha,analyzer_version) DO UPDATE SET state='ready',approved_at=now(),updated_at=now();
+UPDATE project SET analysis_status='ready' WHERE code='$PROJ';
+SQL
+      WO=$(curl -sS --max-time 15 "$API/v1/work-orders/next?project=$PROJ&provider=codex" -H "Authorization: Bearer $TOK" 2>/dev/null)
+    fi
     if printf '%s' "$WO" | grep -q '"work_order":null'; then
-      warn "žádný úkol ve stavu ready — work order se nevydal"
-      info "založ úkol v panelu, nebo použij seedovaný projekt sandbox"
+      [[ -n "$PROJ" ]] && warn "žádný úkol ve stavu ready — work order se nevydal"
+      [[ -n "$PROJ" ]] && info "založ úkol v panelu, nebo použij seedovaný projekt sandbox"
     elif printf '%s' "$WO" | grep -q '"signature"'; then
       ok "work order vydán a podepsán"
       # Podpis musí projít stejným veřejným klíčem, jaký dostávají klienti.
@@ -234,10 +266,12 @@ fi
 # ═══ 8. Pracovní prostředí ═════════════════════════════════════
 hdr "Workspace pro stanice"
 if [[ -n "${TOK:-}" ]]; then
-  PROJ=$(curl -fsS --max-time 10 "$API/v1/workspace/projects" -H "Authorization: Bearer $TOK" 2>/dev/null \
-         | python3 -c "import json,sys
+  if [[ -z "${PROJ:-}" ]]; then
+    PROJ=$(curl -fsS --max-time 10 "$API/v1/workspace/projects" -H "Authorization: Bearer $TOK" 2>/dev/null \
+           | python3 -c "import json,sys
 p=json.load(sys.stdin).get('projects') or []
 print(p[0]['code'] if p else '')" 2>/dev/null)
+  fi
   if [[ -n "$PROJ" ]]; then
     ok "seznam projektů se načte (první: $PROJ)"
     for ph in discovery design implementation hardening delivery support; do
@@ -422,21 +456,22 @@ command -v agenticdev >/dev/null \
   && ok "agenticdev je v PATH" \
   || bad "agenticdev není nainstalovaný — pody se pouštějí na VPS (ADR-0005)"
 
-# Bez skupiny docker člověk pod nespustí. Kontrolujeme účty, které mají
-# konfiguraci od `agenticdev-ctl user add`.
-PEOPLE=0; NODOCKER=""
+# Lidé nesmí mít přímý přístup k Dockeru; runtime spouští úzký root broker.
+# Kontrolujeme účty, které mají konfiguraci od `agenticdev-ctl user add`.
+PEOPLE=0; PRIVILEGED=""
 for h in /home/*; do
   [[ -f "$h/.agenticdev/config" ]] || continue
   PEOPLE=$((PEOPLE+1))
   u=$(basename "$h")
-  id -nG "$u" 2>/dev/null | tr ' ' '\n' | grep -qx docker || NODOCKER="$NODOCKER $u"
+  groups=$(id -nG "$u" 2>/dev/null | tr ' ' '\n')
+  if grep -Eq '^(docker|sudo)$' <<<"$groups"; then PRIVILEGED="$PRIVILEGED $u"; fi
 done
 if (( PEOPLE == 0 )); then
   warn "na VPS nemá účet nikdo — 'agenticdev-ctl user add <login>'"
-elif [[ -z "$NODOCKER" ]]; then
-  ok "$PEOPLE lidí má účet i skupinu docker"
+elif [[ -z "$PRIVILEGED" ]]; then
+  ok "$PEOPLE lidí nemá přímý přístup k docker/sudo"
 else
-  bad "bez skupiny docker (pod nespustí):$NODOCKER"
+  bad "účty s nebezpečným přímým přístupem k docker/sudo:$PRIVILEGED"
 fi
 
 # ═══ 9. Úklid ══════════════════════════════════════════════════

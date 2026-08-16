@@ -132,5 +132,5 @@ Write-Host "  Klikni na ikonu AgenticDev, nebo z příkazové řádky:"
 Write-Host "      tailscale ssh $Login@$vps" -ForegroundColor Yellow
 Write-Host "      agenticdev" -ForegroundColor Yellow
 Write-Host ""
-Write-Host "  Poprvé se v Pi přihlas k modelu přes /login. Pak už to platí." -ForegroundColor DarkGray
+Write-Host "  Při první práci vyber Claude nebo Codex a dokonči jeho nativní subscription login." -ForegroundColor DarkGray
 Write-Host ""

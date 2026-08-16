@@ -124,6 +124,8 @@ class JoinRequest(BaseModel):
     first_name: str = ""
     last_name: str = ""
     email: str = ""
+    login: str = ""
+    ssh_public_key: str = ""
 
 
 _MAIL_RE = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]{2,}$")
@@ -140,7 +142,24 @@ def _need_identity(b: "JoinRequest") -> tuple[str, str, str]:
     return first, last, mail
 
 
-def _record_enrollment(first: str, last: str, mail: str, os_: str, ip: str) -> None:
+_LOGIN_RE = re.compile(r"^[a-z_][a-z0-9_-]{0,31}$")
+_RESERVED = {"root", "daemon", "bin", "sys", "sync", "games", "man", "lp",
+             "mail", "news", "uucp", "proxy", "www-data", "backup", "list",
+             "irc", "gnats", "nobody", "sshd", "docker", "postgres", "forgejo",
+             "agenticdev"}
+
+
+def _need_account(b: "JoinRequest") -> tuple[str, str]:
+    login, key = b.login.strip().lower(), b.ssh_public_key.strip()
+    if not _LOGIN_RE.fullmatch(login) or login in _RESERVED:
+        raise HTTPException(400, "login není povolený")
+    if not re.fullmatch(r"ssh-ed25519 [A-Za-z0-9+/]+={0,2}(?: .*)?", key):
+        raise HTTPException(400, "neplatný Ed25519 veřejný klíč")
+    return login, key
+
+
+def _record_enrollment(first: str, last: str, mail: str, os_: str, ip: str,
+                       login: str, key: str, status_hash: str) -> str:
     """
     Zapíše, kdo se ohlásil. Účet na VPS zakládá root zvlášť, takže tohle
     je jediná stopa, ze které pozná, koho zavést. Selhat kvůli tomu celou
@@ -149,12 +168,32 @@ def _record_enrollment(first: str, last: str, mail: str, os_: str, ip: str) -> N
     try:
         from .main import db
         with db() as c:
-            c.execute(
-                """INSERT INTO enrollment (first_name, last_name, email, os, ip)
-                   VALUES (%s,%s,%s,%s,%s)""",
-                (first, last, mail, os_, ip))
+            if not login:
+                row = c.execute(
+                    """INSERT INTO enrollment (first_name,last_name,email,os,ip)
+                       VALUES (%s,%s,%s,%s,%s) RETURNING id""",
+                    (first, last, mail, os_, ip)).fetchone()
+                return str(row["id"])
+            existing = c.execute(
+                """SELECT id,ssh_public_key FROM enrollment WHERE login=%s
+                     AND state IN ('pending','provisioning','ready')""", (login,)).fetchone()
+            if existing:
+                if existing["ssh_public_key"] != key:
+                    raise HTTPException(409, "login už patří jinému klíči")
+                c.execute("UPDATE enrollment SET status_token_hash=%s WHERE id=%s",
+                          (status_hash, existing["id"]))
+                return str(existing["id"])
+            row = c.execute(
+                """INSERT INTO enrollment
+                       (first_name,last_name,email,os,ip,login,ssh_public_key,status_token_hash)
+                   VALUES (%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                (first, last, mail, os_, ip, login, key, status_hash)).fetchone()
+            return str(row["id"])
+    except HTTPException:
+        raise
     except Exception as e:                             # noqa: BLE001
         print(f"[enroll] zápis registrace se nepovedl: {e}")
+        raise HTTPException(503, "registraci se nepodařilo zařadit") from e
 
 
 @router.post("/join/api")
@@ -179,7 +218,16 @@ def join(body: JoinRequest, request: Request):
     first, last, mail = _need_identity(body)
 
     _clear_attempts(ip)
-    _record_enrollment(first, last, mail, body.os, ip)
+    status_token = enrollment_id = None
+    if body.login or body.ssh_public_key:
+        login, public_key = _need_account(body)
+        status_token = secrets.token_urlsafe(32)
+        enrollment_id = _record_enrollment(
+            first, last, mail, body.os, ip, login, public_key,
+            hashlib.sha256(status_token.encode()).hexdigest())
+    else:
+        # Kompatibilita registrační stránky: pouze zapíše kontakt.
+        _record_enrollment(first, last, mail, body.os, ip, "", "", "")
 
     key = _mint_authkey(ip)
     fp = hashlib.sha256(f"{INSTANCE_ID}\n{VERIFY_KEY}".encode()).hexdigest()
@@ -200,7 +248,21 @@ def join(body: JoinRequest, request: Request):
         # platí i zvenčí přes Funnel, i z tailnetu.
         "installer_url": "installer",
         "have_installer": INSTALLER_PATH.is_file(),
+        "enrollment_id": enrollment_id,
+        "status_token": status_token,
     }
+
+
+@router.get("/join/status/{enrollment_id}")
+def enrollment_status(enrollment_id: str, token: str):
+    from .main import db
+    with db() as c:
+        row = c.execute(
+            "SELECT state,error,login FROM enrollment WHERE id=%s AND status_token_hash=%s",
+            (enrollment_id, hashlib.sha256(token.encode()).hexdigest())).fetchone()
+    if not row:
+        raise HTTPException(404, "registrace nenalezena")
+    return {"state": row["state"], "error": row["error"], "login": row["login"]}
 
 
 _REPO = Path("/repo")
@@ -216,9 +278,9 @@ def installer(body: JoinRequest, request: Request):
     """
     Instalátor se vydává jen proti heslu.
 
-    macOS dostane soubor vyrobený mk-mac-installerem — nese v sobě join
-    token a fingerprint instance, takže se proti cizímu serveru odmítne
-    nainstalovat. Linux a Windows dostanou skript s doplněnou adresou;
+    macOS dostane soubor vyrobený mk-mac-installerem — nese fingerprint
+    instance, takže se proti cizímu serveru odmítne nainstalovat, ale žádné
+    tajemství. Linux a Windows dostanou skript s doplněnou adresou;
     heslo si předávají argumentem.
 
     Windows verze je PowerShell: připraví WSL a uvnitř něj si vyžádá
@@ -261,6 +323,18 @@ def installer(body: JoinRequest, request: Request):
     return PlainTextResponse(
         INSTALLER_PATH.read_text(),
         headers={"content-disposition": 'attachment; filename="agenticdev-install.sh"'},
+    )
+
+
+@router.get("/join/install", include_in_schema=False)
+def public_mac_installer():
+    """Vydá netajný, s touto instancí svázaný macOS bootstrap."""
+    if not INSTALLER_PATH.is_file():
+        raise HTTPException(503, "instalátor Macu zatím není připravený")
+    return PlainTextResponse(
+        INSTALLER_PATH.read_text(),
+        media_type="text/x-shellscript",
+        headers={"content-disposition": 'attachment; filename="agenticdev-install-mac.sh"'},
     )
 
 
