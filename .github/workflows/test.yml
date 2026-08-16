@@ -79,6 +79,15 @@ jobs:
       - name: make test-git
         run: make test-git
 
+  runtime-boundary:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install broker crypto dependency
+        run: python3 -m pip install 'cryptography==50.*'
+      - name: Privileged broker negative tests
+        run: make test-broker
+
   # ── Build musí být deterministický ─────────────────────────────────
   reproducible:
     runs-on: ubuntu-latest
@@ -130,6 +139,7 @@ jobs:
           JWT_SECRET=testtesttesttest
           WO_SIGNING_KEY_B64=dGVzdA==
           WO_VERIFY_KEY_B64=dGVzdA==
+          BROKER_SECRET=testtesttesttest
           JOIN_TOKEN=testtesttesttest
           DASHBOARD_TOKEN=testtesttesttest
           FORGEJO_ADMIN_USER=admin

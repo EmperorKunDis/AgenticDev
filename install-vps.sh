@@ -244,7 +244,7 @@ export DEBIAN_FRONTEND=noninteractive
 run "apt update              " apt-get update -qq
 run "instalace nástrojů      " apt-get install -y -qq \
   ca-certificates curl gnupg git jq ufw fail2ban unattended-upgrades \
-  restic openssl rsync python3 iproute2
+  restic openssl rsync python3 python3-cryptography iproute2
 
 step "Docker"
 if ! command -v docker >/dev/null; then
@@ -441,7 +441,7 @@ if (( FRESH )); then
 
   INSTANCE_ID=$(cat /proc/sys/kernel/random/uuid)
   PG_PW=$(gen 48 40); MINIO_PW=$(gen 48 40); JWT=$(gen 64 56)
-  FJ_PW=$(gen 32 24); JOIN_TOKEN=$(gen 48 40); DASH_TOKEN=$(gen 32 20)
+  FJ_PW=$(gen 32 24); JOIN_TOKEN=$(gen 48 40); DASH_TOKEN=$(gen 32 20); BROKER_SECRET=$(gen 64 56)
   # Forgejo bez SECRET_KEY + INSTALL_LOCK nabíhá do instalačního
   # průvodce a `forgejo admin ...` selže na MustInstalled().
   FJ_SECRET=$(gen 80 64)
@@ -493,6 +493,7 @@ MINIO_ROOT_PASSWORD=$MINIO_PW
 JWT_SECRET=$JWT
 WO_SIGNING_KEY_B64=$WO_PRIV
 WO_VERIFY_KEY_B64=$WO_PUB
+BROKER_SECRET=$BROKER_SECRET
 JOIN_TOKEN=$JOIN_TOKEN
 DASHBOARD_TOKEN='$(envq "$ADMIN_PW")'
 ENROLL_PASSWORD='$(envq "$ENROLL_PW")'
@@ -582,6 +583,11 @@ open(p, 'w').write(s)
 PY
   fi
   ok "konfigurace doplněna"
+fi
+
+if ! grep -q '^BROKER_SECRET=..' "$ENVF"; then
+  printf 'BROKER_SECRET=%s\n' "$(openssl rand -hex 32)" >>"$ENVF"
+  chmod 600 "$ENVF"
 fi
 
 # shellcheck disable=SC1090
@@ -726,6 +732,29 @@ fi
 #  9. Nástroje na VPS
 # ═══════════════════════════════════════════════════════════════════════
 step "Nástroje"
+getent group agenticdev-broker >/dev/null || groupadd --system agenticdev-broker
+for home in /home/*; do
+  [[ -f "$home/.agenticdev/config" ]] || continue
+  login=$(basename "$home")
+  getent group docker >/dev/null && gpasswd -d "$login" docker >/dev/null 2>&1 || true
+  getent group sudo >/dev/null && gpasswd -d "$login" sudo >/dev/null 2>&1 || true
+  usermod -aG agenticdev-broker "$login"
+done
+install -d -m 0755 /etc/systemd/system/containerd.service.d
+install -m 0644 "$SRC/vps/containerd-agenticdev.conf" \
+  /etc/systemd/system/containerd.service.d/agenticdev-socket.conf
+[[ ! -S /var/run/docker.sock ]] || { chown root:docker /var/run/docker.sock; chmod 0660 /var/run/docker.sock; }
+[[ ! -S /run/containerd/containerd.sock ]] || { chown root:root /run/containerd/containerd.sock; chmod 0600 /run/containerd/containerd.sock; }
+install -d -m 0750 /usr/local/lib/agenticdev
+install -d -m 0750 /var/lib/agenticdev-broker /srv/agenticdev/workloads
+install -d -m 0770 -o root -g agenticdev-broker /run/agenticdev
+install -m 0750 "$SRC/vps/broker.py" /usr/local/lib/agenticdev/broker.py
+install -m 0755 "$SRC/vps/broker-client.py" /usr/local/bin/agenticdev-broker-client
+install -m 0644 "$SRC/vps/agenticdev-broker.service" /etc/systemd/system/agenticdev-broker.service
+docker build -t agenticdev/pod:installed "$SRC/pod" >>"$LOG" 2>&1
+docker build -t agenticdev/egress:installed "$SRC/pod/egress" >>"$LOG" 2>&1
+systemctl daemon-reload
+systemctl enable --now agenticdev-broker.service >>"$LOG" 2>&1
 install -m 0755 "$SRC/vps/agenticdev-ctl" /usr/local/bin/agenticdev-ctl
 # Launcher patří na VPS, protože tam běží pody (ADR-0005). Lidé ho pouštějí
 # po přihlášení přes Tailscale SSH.

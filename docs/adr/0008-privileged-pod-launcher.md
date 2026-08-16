@@ -1,6 +1,6 @@
 # ADR-0008 (návrh): root-owned broker pro spouštění pracovních podů
 
-- Stav: **Navrženo — blokuje implementaci P0**
+- Stav: **Přijato; první implementace runtime boundary**
 - Datum: 2026-08-15
 - Nahrazuje bezpečnostní část ADR-0005; umístění podu na VPS zachovává.
 
@@ -69,6 +69,26 @@ Worktrees a per-user credentials se musí přesunout pod broker-owned cesty a
 vydávat workloadu jako explicitní, principal-bound mounty/secrets. Je nutná DB
 migrace pro membership, nonce/consumption a kill epoch. Jde o vědomou změnu
 bezpečnostní architektury, nikoli úpravu kvůli testu.
+
+## Implementační upřesnění
+
+Broker používá root-owned Unix socket a lokální SQLite replay store. Control
+plane při každém startu znovu ověřuje přesný hash uloženého Work Orderu,
+assignment, device JWT, principal, membership, lease a kill epoch. To je
+záměrně online a fail-closed; samotný platný podpis nestačí po revokaci.
+
+Host cesty broker odvozuje výhradně pod `/srv/agenticdev/workloads` z UUID
+principala, project code a UUID tasku. Phase scope se redukuje na validovaný
+top-level adresář. Root-owned rodiče brání uživateli v záměně mount targetu;
+symlink v kterékoli odvozené komponentě je odmítnut.
+
+První backend používá Docker pouze uvnitř root služby. Image, entrypoint,
+network, security flags a mounts jsou pevnou součástí template
+`agent-pod-v1`; klient Docker socket nevidí. Diskový strop používá Docker
+`--storage-opt size` a před produkčním nasazením vyžaduje live ověření podpory
+storage driveru. Interaktivní attach a úplná inicializace broker-owned git
+worktree zůstávají provozními blokery, nikoli bezpečnostním fallbackem: broker
+bez nich workload nespustí použitelně a klient se k Dockeru nevrací.
 
 ## Acceptance před označením „Přijato"
 

@@ -11,7 +11,9 @@ chk_repo(){ if [[ -d .github ]]; then chk "$1" "$2"; else echo "  – $2 (není 
 echo "── VPS ──"
 for f in vps/docker-compose.yml vps/Caddyfile vps/sql/001_schema.sql \
          vps/sql/002_seed.sql vps/backup/restic-backup.sh install-vps.sh \
-         vps/mk-mac-installer.sh vps/agenticdev-ctl; do chk "$f" "$f"; done
+         vps/mk-mac-installer.sh vps/agenticdev-ctl vps/broker.py \
+         vps/broker-client.py vps/agenticdev-broker.service \
+         vps/containerd-agenticdev.conf; do chk "$f" "$f"; done
 
 echo "── control plane ──"
 for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/app/main.py \

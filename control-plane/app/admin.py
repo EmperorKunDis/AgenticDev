@@ -520,6 +520,11 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
             (client["id"], code, repo, p.data_class, models, p.budget_czk_month)).fetchone()
 
+        owner_principal = who(op)
+        if owner_principal:
+            c.execute("INSERT INTO project_member (project_id, principal_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                      (proj["id"], owner_principal))
+
         for i, kind in enumerate(PHASES):
             c.execute(
                 """INSERT INTO phase (project_id, kind, order_idx, active)
@@ -913,8 +918,9 @@ class Kill(BaseModel):
 def kill_switch(b: Kill, op: dict = Depends(operator)):
     with db() as c:
         c.execute("""UPDATE platform_state
-                        SET issuing_enabled = %s, reason = %s, updated_at = now()
-                      WHERE id = 1""", (b.enabled, b.reason))
+                        SET issuing_enabled = %s, reason = %s, updated_at = now(),
+                            epoch = epoch + CASE WHEN %s THEN 0 ELSE 1 END
+                      WHERE id = 1""", (b.enabled, b.reason, b.enabled))
     return {"issuing_enabled": b.enabled}
 
 

@@ -150,147 +150,28 @@ DEC
   chmod +x "$ws/.agenticdev/bin/agenticdev-decision"
   grep -q '^\.agenticdev/$' "$ws/.gitignore" 2>/dev/null || echo '.agenticdev/' >> "$ws/.gitignore"
 
-  # ── Sandbox ────────────────────────────────────────────────────
-  if ! command -v docker >/dev/null; then
-    die "Na tomhle stroji není Docker. Pod se spouští na VPS — přihlas se tam:
-   tailscale ssh $(id -un)@<vps>"
-  fi
-  if ! docker info >/dev/null 2>&1; then
-    die "Na Docker nedosáhnu. Bez izolace agenta nespustím.
-   Nejčastěji chybí členství ve skupině docker:
-   správce spustí  usermod -aG docker $(id -un)  a ty se přihlásíš znovu."
-  fi
+  # ── Privilegovaný broker ──────────────────────────────────────
+  # Klient neposílá Compose, image, command, environment, mount ani host path.
+  # Jediným autoritativním vstupem je přesně podepsaný Work Order; všechny
+  # runtime detaily skládá root-owned broker z immutable šablony.
+  local wo wo_id
+  wo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next?project=$code" \
+       -H "Authorization: Bearer $t") \
+    || die "Server nevydal Work Order. Bez ověřitelné autorizace pod nespustím."
+  jq -e '.work_order.signature and .work_order.nonce' >/dev/null <<<"$wo" \
+    || die "Server nevydal podepsaný Work Order. Interaktivní fallback je zakázán."
+  wo_id=$(jq -r '.work_order.work_order_id' <<<"$wo")
+  c "Work Order $(cut -c1-8 <<<"$wo_id") — $(jq -r '.work_order.task.title' <<<"$wo")"
 
-  local pod_dir="$CFG_DIR/pod"
-  if [[ ! -f "$pod_dir/compose.yaml" ]]; then
-    c "Stahuji definici podu"
-    mkdir -p "$pod_dir/egress" "$pod_dir/harness"
-    for f in compose.yaml Dockerfile egress/Dockerfile egress/entrypoint.sh \
-             harness/harness.py harness/director.py; do
-      curl -fsSL "$CONTROL_PLANE/pod/$f" -o "$pod_dir/$f" \
-        || die "Nepodařilo se stáhnout pod/$f z VPS."
-    done
-  fi
+  command -v agenticdev-broker-client >/dev/null \
+    || die "Chybí klient privilegovaného brokeru; kontaktuj správce."
+  c "Startuji pod přes privilegovaný broker"
+  AGENTICDEV_DEVICE_TOKEN="$t" jq -c '.work_order' <<<"$wo" | \
+    AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client \
+    || die "Broker workload odmítl nebo bezpečně ukončil."
 
-  # Kontext a tajemství mimo repozitář — do gitu se nesmí dostat.
-  local ctx="$CFG_DIR/ctx/$code"
-  mkdir -p "$ctx"; chmod 700 "$CFG_DIR/ctx"
-
-  # Worktree rozdělaných úkolů. Leží u ostatních projektů na hostiteli,
-  # ne v podu — jinak by se s ním smazaly.
-  local trees="$WORK_ROOT/.agenticdev-trees"
-  mkdir -p "$trees"
-
-  # Scope na zapisovatelné mounty. Repozitář jde dovnitř read-only,
-  # tyhle cesty se přes něj přemountují rw. Co není tady, je pro agenta
-  # jen ke čtení — a vynucuje to jádro.
-  local ovr="$pod_dir/compose.override.yaml"
-  {
-    echo "services:"
-    echo "  pod:"
-    echo "    volumes:"
-    echo "      - $ws/.git:/workspace/.git:rw"
-    echo "      - $ws/.agenticdev:/workspace/.agenticdev:rw"
-    echo "$b" | jq -r '.scope[]?' | while read -r sc; do
-      [[ -n "$sc" ]] || continue
-      local top="${sc%%/*}"
-      [[ -n "$top" && "$top" != "." ]] || continue
-      mkdir -p "$ws/$top"
-      echo "      - $ws/$top:/workspace/$top:rw"
-    done
-  } > "$ovr"
-
-  # Policy pro harness. Egress vždy obsahuje control plane — bez něj by
-  # pod nemohl zapisovat rozhodnutí.
-  local cp_host; cp_host=$(sed -E 's|^https?://||; s|[:/].*$||' <<<"$CONTROL_PLANE")
-  local allow; allow=$(echo "$b" | jq -r '.egress_allowlist // [] | join(",")')
-  [[ -n "$allow" ]] && allow="$cp_host,$allow" || allow="$cp_host"
-
-  # Work order. Bez něj do podu nedorazí limity opakování ani human gate,
-  # takže by director neměl co vynucovat (ADR-0003). Když žádný úkol není
-  # ready, pracuje se interaktivně jako dřív.
-  local wo wo_id="" wo_policy="null" wo_task="null"
-  wo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next" -H "Authorization: Bearer $t" 2>/dev/null || true)
-  if [[ -n "$wo" ]] && ! jq -e '.work_order == null' >/dev/null 2>&1 <<<"$wo"; then
-    wo_id=$(jq -r '.work_order.work_order_id // ""' <<<"$wo")
-    wo_policy=$(jq -c '.work_order.policy // null' <<<"$wo")
-    wo_task=$(jq -c '.work_order.task // null' <<<"$wo")
-    c "Work order $(cut -c1-8 <<<"$wo_id") — $(jq -r '.work_order.task.title // "?"' <<<"$wo")"
-  else
-    warn "žádný úkol ve stavu ready — otevřu interaktivní session"
-  fi
-
-  local lease_h; lease_h=$(echo "$b" | jq -r '.lease_hours // 4')
-  # `model` tu není: vybírá si ho člověk v Pi a umí ho přepnout za běhu,
-  # takže by policy nesla údaj, který za chvíli neplatí. Hranicí je egress
-  # (ADR-0004).
-  echo "$b" | jq \
-      --arg cp "$CONTROL_PLANE" --arg br "$branch" --arg wo "$wo_id" \
-      --argjson wop "$wo_policy" --argjson wot "$wo_task" \
-      --argjson dl "$(( $(date +%s) + lease_h * 3600 ))" \
-      '{project: .project.code, client: .project.client, phase: .project.phase,
-        data_class: .project.data_class, model_allowlist: .project.model_allowlist,
-        scope: .scope,
-        egress: (.egress_allowlist // []), budget_tokens: (.budget_tokens // null),
-        control_plane: $cp, branch: $br, deadline_ts: $dl,
-        work_order_id: (if $wo == "" then null else $wo end),
-        task: $wot,
-        max_loop_iterations: ($wop.max_loop_iterations // null),
-        human_gate: ($wop.human_gate // [])}' > "$ctx/policy.json"
-
-  # Přihlášení k modelu a sessions toho člověka. Adresář musí existovat
-  # dřív, než ho Docker připojí — jinak ho vyrobí jako root a Pi si do něj
-  # nezapíše.
-  mkdir -p "$PI_DIR"; chmod 700 "$PI_DIR"
-
-  local a_name a_email
-  a_name=$(echo "$b"  | jq -r '.author.name  // "AgenticDev agent"')
-  a_email=$(echo "$b" | jq -r '.author.email // "agent@agenticdev.local"')
-
-  cat > "$pod_dir/.env" <<ENVF
-AGENTICDEV_PROJECT=$code
-AGENTICDEV_REPO_DIR=$ws
-AGENTICDEV_CTX_DIR=$ctx
-AGENTICDEV_TREES_DIR=$trees
-AGENTICDEV_PI_DIR=$PI_DIR
-AGENTICDEV_EGRESS_ALLOW=$allow
-AGENTICDEV_AUTHOR_NAME=$a_name
-AGENTICDEV_AUTHOR_EMAIL=$a_email
-AGENTICDEV_UID=$(id -u)
-AGENTICDEV_GID=$(id -g)
-ENVF
-  chmod 600 "$pod_dir/.env"
-
-  clear
-  printf "\n  ${G}▍${O} ${B}%s${O}  ${D}%s${O}\n" "$code" "$client"
-  printf "  ${D}%s${O}\n" "──────────────────────────────────────────"
-  printf "  fáze          ${B}%s${O}\n" "$phase"
-  printf "  data          %s\n" "$dclass"
-  printf "  smíš měnit    %s\n" "$(echo "$b" | jq -r '.scope | join(", ")')"
-  printf "  úkoly         %s ready ${D}(.agenticdev/tasks.md)${O}\n" "$tasks"
-  printf "  větev         %s\n" "$branch"
-  printf "  ${D}──────────────────────────────────────────${O}\n\n"
-
-  c "Startuji pod"
-  ( cd "$pod_dir" && docker compose up -d --build egress >/dev/null 2>&1 ) \
-    || die "Egress proxy nenaběhla. Pod bez ní nespustím."
-  ok "egress"
-
-  # Token a policy až teď, na tmpfs uvnitř podu — na disk hostitele se
-  # nedostanou.
-  ( cd "$pod_dir" && docker compose up -d --no-deps pod >/dev/null 2>&1 ) \
-    || die "Pod nenaběhl."
-  local cid; cid=$( cd "$pod_dir" && docker compose ps -q pod )
-  docker cp "$ctx/policy.json" "$cid:/run/agenticdev/policy.json" >/dev/null
-  docker cp "$CFG_DIR/token"   "$cid:/run/agenticdev/token"       >/dev/null 2>&1 || true
-
-  docker exec -it "$cid" python3 /opt/agenticdev/harness.py || true
-
-  # ── Úklid ──────────────────────────────────────────────────────
-  c "Uklízím"
-  ( cd "$pod_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1 ) || true
-  rm -f "$ctx/policy.json"
-  ok "pod zrušen"
+  # Broker vlastní lifecycle, teardown i audit. Klient nemá container ID ani
+  # oprávnění volat runtime přímo.
 
   if [[ -n "$(git -C "$ws" status --porcelain 2>/dev/null)" ]]; then
     warn "Ve workspace zůstaly nezacommitované změny."
@@ -371,13 +252,7 @@ cmd_doctor() {
   for t in git jq curl; do
     command -v $t >/dev/null && ok "$t" || { warn "chybí: $t"; bad=1; }
   done
-  # Pi běží v podu, ne tady. Na VPS ho tedy nehledáme — hledáme Docker,
-  # kterým se pod spouští.
-  if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-    ok "docker"
-  else
-    warn "na Docker nedosáhnu — správce: usermod -aG docker $(id -un)"; bad=1
-  fi
+  command -v agenticdev-broker-client >/dev/null && ok "privilegovaný broker" || { warn "broker klient chybí"; bad=1; }
   if [[ -f "$PI_DIR/auth.json" ]]; then
     ok "přihlášení k modelu ($PI_DIR)"
   else

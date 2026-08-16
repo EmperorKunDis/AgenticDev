@@ -7,11 +7,10 @@ bezpečnostního rozhodování.
 
 ## Výsledek
 
-**P0 není připravené k nasazení.** Zásadní požadavek (žádný root ekvivalent
-pro běžného uživatele) přímo koliduje s přijatým ADR-0005 a se současným
-launcherem. Podle zadání se proto implementace nesmí obejít kosmetickou změnou
-nebo testem: nejprve je nutné přijmout náhradní architekturu popsanou v
-[`docs/adr/0008-privileged-pod-launcher.md`](docs/adr/0008-privileged-pod-launcher.md).
+**P0 jako celek není připravené k nasazení.** ADR-0008 bylo přijato a první
+runtime boundary je implementované, ale vyžaduje live VPS ověření a dokončení
+interaktivního attach/worktree provisioning. Ostatní P0 bloky zůstávají mimo
+scope této změny.
 
 ## Metoda a hranice důkazu
 
@@ -29,60 +28,55 @@ nebo testem: nejprve je nutné přijmout náhradní architekturu popsanou v
 
 ### 1. Běžný uživatel nesmí mít docker-group/root ekvivalent
 
-**CONFLICTS WITH CURRENT ARCHITECTURE**
+**NEEDS LIVE VERIFICATION**
 
-- `vps/agenticdev-ctl`, větev `user add`, uživatele výslovně přidává do skupiny
-  `docker` (`usermod -aG docker`).
-- `launcher/agenticdev`, funkce `cmd_work`, vyžaduje úspěšné `docker info` a
-  přímo provádí `docker compose`, `docker cp` a `docker exec`.
+- `vps/agenticdev-ctl user add` i upgrade v `install-vps.sh` odstraňují uživatele
+  z `docker` a `sudo`; uživatel dostává pouze přístup k úzkému broker socketu.
+- `launcher/agenticdev::cmd_work` už Docker nevolá a bez podepsaného Work Orderu
+  nemá fallback.
 - Runner je `root` a mountuje `/var/run/docker.sock` v
   `vps/docker-compose.yml`. I když nejde o interaktivní účet zaměstnance,
   nedůvěryhodný workflow má přes socket host-root dopad a sousedí se secrets.
-- ADR-0005 tento root ekvivalent přijímá jako známou cenu. To odporuje cílovému
-  invariantu, ne pouze detailu implementace.
+- Negativní source-level testy změnu dokazují; skutečná práva socketů a group
+  refresh po upgradu musí potvrdit live VPS test.
 
 ### 2. Úzký privileged launcher/helper
 
-**MISSING**
+**NEEDS LIVE VERIFICATION**
 
-V repozitáři není root-owned helper, systemd socket/service ani přesně omezené
-API pro lifecycle podu. `vps/agenticdev-ctl` je široký rootovský administrační
-nástroj; launcher naopak komunikuje s Docker daemonem přímo. Požadované
-rozhraní, validační schéma, vazba identity na projekt a ochrana cest chybí.
+`vps/broker.py` a `vps/agenticdev-broker.service` tvoří root-owned boundary.
+Request má pouze `action`, celý immutable `work_order` a `device_token`;
+jakékoli další pole se odmítne. Runtime plán používá pevné images, příkazy,
+sítě a mounty. Chybí živý důkaz systemd hardeningu a funkční interaktivní attach.
 
 ### 3. Ověřit signed Work Order před spuštěním podu
 
-**PARTIAL**
+**NEEDS LIVE VERIFICATION**
 
 - `control-plane/app/main.py::next_work_order` kanonicky serializuje manifest a
   podepisuje jej Ed25519.
-- `launcher/agenticdev::cmd_work` však zahodí `signature`, vybere jen části
-  `policy` a `task`, spojí je s nepodepsaným workspace bundlem a sám zapíše
-  `policy.json`. Následně spustí kontejnery bez ověření podpisu.
-- `pod/harness/harness.py::load_policy` kontroluje přítomnost polí, deadline a
-  některá pravidla, nikoli Ed25519 podpis. `WO_VERIFY_KEY_B64` se do control
-  plane předává, ale startovací hranice jej nepoužívá.
-- Interaktivní session bez Work Orderu je výslovně povolená. Pro P0 musí být
-  produkční start fail-closed, nebo musí mít samostatný, serverem podepsaný typ
-  oprávnění.
+- Broker ověřuje Ed25519 podpis, issuer/key ID, nbf/exp, subject, template a
+  limity před side effectem; nonce atomicky spotřebuje v root-owned SQLite.
+- Control plane online ověřuje exact manifest hash, JWT workstation,
+  principal, project membership, task/phase, assignment/lease a kill epoch.
+- Nedostupný control plane i nepodepsaný interaktivní start jsou fail-closed.
 
 ### 4. Resource limits
 
-**MISSING**
+**NEEDS LIVE VERIFICATION**
 
-`pod/compose.yaml` nemá CPU, memory, PID ani ulimit stropy ani pro `pod`, ani pro
-`egress`. Work Order sice nese `max_wall_clock_min` a rozpočet, ale launcher je
-do výsledné policy nepřenáší a runtime je nevynucuje. VPS služby rovněž nemají
-limity, což umožňuje noisy-neighbour/DoS dopad.
+Podepsaná template nese CPU, RAM, PID, wall-clock a disk limity. Broker je
+překládá na pevné Docker flags a test kontroluje jejich přítomnost. Skutečné
+vynucení cgroups, timeoutu a `--storage-opt size` musí potvrdit live storage
+driver/cgroup test.
 
 ### 5. Skutečné sandbox adversarial testy
 
-**MISSING**
+**PARTIAL**
 
-CI v `.github/workflows/test.yml` parsuje zdroje, testuje git helper,
-reprodukovatelnost a Compose interpolaci. Nespouští útoky z podu: Docker socket,
-host filesystem, capabilities, namespaces, mount escape, symlink/path
-traversal, procfs, secrets a sousední kontejnery nejsou ověřeny.
+CI nově provádí broker negativní testy pro podpis, čas, replay, identity,
+membership/kill odmítnutí, traversal/symlink, zakázané runtime vstupy a pevný
+hardening plán. Útoky ze skutečně běžícího kontejneru stále vyžadují live VPS.
 
 ### 6. Egress default-deny testy
 
@@ -97,14 +91,12 @@ a současně průchod explicitně povoleného cíle.
 
 ### 7. Cross-user a cross-project isolation
 
-**MISSING**
+**PARTIAL**
 
-Unix home odděluje per-user `PI_DIR`, ale členství všech uživatelů v `docker`
-ruší veškerou izolaci. Launcher navíc dovoluje uživateli měnit stažený Compose,
-override i `.env` ve vlastním home a Docker daemon změny privilegovaně provede.
-Projektový seznam v `control-plane/app/workspace.py::projects` nemá membership
-filtr a `bundle` vybírá projekt pouze podle kódu, takže serverová autorizace
-uživatel→projekt chybí.
+`project_member` nyní filtruje project list/bundle, issuance i broker online
+authorization. Host paths vznikají z principal/project/task ID pod root-owned
+kořenem a symlink/traversal se odmítá. Cross-user/cross-project pokusy jsou
+unit-testované; čtení z reálného adversarial podu vyžaduje live VPS.
 
 ### 8. Expirovatelné single-use enrollment tokeny
 
@@ -197,13 +189,13 @@ Chybí auditní událost i idempotentní test.
 
 ## Blokující závislosti a pořadí P0
 
-1. Přijmout ADR-0008 a určit runtime backend (root-owned helper + rootless
-   runtime, nebo izolovaný worker host). Bez toho nelze poctivě dokazovat body
-   1, 2, 3, 5, 7 a 13.
-2. Zavést serverový autorizační model principal↔project a jednorázové
-   enrollment credentials; až potom migraci/offboarding.
-3. Spouštět výhradně ověřený, neexpirovaný a identitě/projektu přiřazený Work
-   Order; helper musí sám skládat neměnnou runtime konfiguraci a limity.
+1. Na izolované VPS ověřit přijatý broker backend, systemd/socket permissions,
+   cgroups, storage driver, síť a adversarial workload; dokončit interaktivní
+   attach a bezpečné naplnění broker-owned worktree.
+2. Autorizační model principal↔project je zaveden; samostatný další P0 blok musí
+   později doplnit jednorázové enrollment credentials a offboarding.
+3. Podepsaný Work Order a immutable runtime template jsou implementovány;
+   produkční přijetí blokuje živý end-to-end důkaz.
 4. Přesunout merge runner mimo Docker socket na aplikační VPS (rootless nebo
    oddělený worker), nastavit fail-closed workflow a approval ≥ 1.
 5. Přidat adversarial integrační suite, restore drill a kill/offboarding suite.
@@ -227,8 +219,9 @@ Chybí auditní událost i idempotentní test.
 
 ## Rizika, která zůstávají po této fázi
 
-Dokud není ADR rozhodnuto a implementováno, běžný zaměstnanec má efektivně root
-na aplikační VPS a všechny ostatní softwarové hranice lze obejít. Nejvyšší
-rizika jsou exfiltrace podpisového/modelového tajemství, přístup k jinému
-projektu, host takeover přes Docker socket a falešně zelený merge. Současný stav
-proto nesplňuje cílový invariant a nesmí být označen jako P0-ready.
+Zdrojový strom již uživateli Docker oprávnění nedává, ale bez live upgrade testu
+nelze potvrdit odstranění starých supplementary groups ani práva socketů.
+Broker backend zatím nemá použitelný interaktivní attach a broker-owned git
+provisioning. Docker `--storage-opt size` závisí na storage driveru a musí být
+ověřen. Forgejo runner nadále drží host Docker socket (oddělený P0 blok) a
+ostatní readiness mezery z této matice zůstávají. P0 proto není ready.

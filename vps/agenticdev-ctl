@@ -165,9 +165,12 @@ case "${1:-status}" in
           printf "${G}  ✓${O} účet %s\n" "$LOGIN"
         fi
 
-        # Bez skupiny docker nespustí pod. Je to zároveň to nejcitlivější
-        # místo celého návrhu — viz varování na konci.
-        getent group docker >/dev/null && usermod -aG docker "$LOGIN"
+        # Runtime socket je root-equivalent. Staré instalace uživatele z těchto
+        # skupin odstraní; jediným oprávněním je úzký broker socket.
+        getent group docker >/dev/null && gpasswd -d "$LOGIN" docker >/dev/null 2>&1 || true
+        getent group sudo >/dev/null && gpasswd -d "$LOGIN" sudo >/dev/null 2>&1 || true
+        getent group agenticdev-broker >/dev/null || groupadd --system agenticdev-broker
+        usermod -aG agenticdev-broker "$LOGIN"
 
         HOME_DIR=$(getent passwd "$LOGIN" | cut -d: -f6)
         install -d -m 0700 -o "$LOGIN" -g "$LOGIN" "$HOME_DIR/.agenticdev"
@@ -225,8 +228,7 @@ CFGEOF
         fi
         printf "    ${Y}agenticdev${O}\n"
         printf "  ${D}Poprvé se v Pi přihlásí k modelu přes /login. Platí to pak dál.${O}\n"
-        printf "\n  ${Y}Pozor:${O} členství ve skupině docker je na tomhle stroji\n"
-        printf "  ${D}rovnocenné rootovi — ten člověk si přečte i %s.${O}\n\n" "$ENVF"
+        printf "\n  ${G}✓${O} bez docker/sudo; pod smí spustit jen root-owned broker\n\n"
         ;;
       pending)
         printf "\n${B}▸ Ohlásili se a čekají na účet${O}\n"
@@ -303,6 +305,20 @@ CFGEOF
     esac
     ;;
 
+  access)
+    [[ $EUID -eq 0 ]] || die "tohle musí root: sudo agenticdev-ctl access $*"
+    [[ "${2:-}" == "grant" && -n "${3:-}" && -n "${4:-}" ]] \
+      || die "použití: agenticdev-ctl access grant <login> <projekt>"
+    LOGIN=$3; CODE=$4
+    dc exec -T postgres psql -v ON_ERROR_STOP=1 -U agenticdev -d agenticdev \
+      -v login="$LOGIN" -v code="$CODE" -c \
+      "INSERT INTO project_member(project_id,principal_id)
+       SELECT p.id,w.principal_id FROM project p JOIN workstation w ON w.login=:'login'
+       WHERE p.code=:'code' AND p.active AND w.revoked_at IS NULL
+       ON CONFLICT(project_id,principal_id) DO UPDATE SET active=true" >/dev/null
+    echo "✓ $LOGIN smí pracovat na $CODE"
+    ;;
+
   gate)
     # Brána před mergem je jediná věc, která zastaví špatný kód od člověka,
     # který ho neumí přečíst. Tenhle příkaz existuje proto, že se z kódu
@@ -352,7 +368,7 @@ PY
     reason="${2:-ruční zastavení}"
     docker compose -f "$SRC/vps/docker-compose.yml" --env-file "$ENVF" \
       exec -T postgres psql -U agenticdev -d agenticdev -c \
-      "UPDATE platform_state SET issuing_enabled=false, reason='$reason', updated_at=now() WHERE id=1"
+      "UPDATE platform_state SET issuing_enabled=false, epoch=epoch+1, reason='$reason', updated_at=now() WHERE id=1"
     echo "✓ vydávání work orderů zastaveno: $reason"
     ;;
 
@@ -381,6 +397,8 @@ PY
                       (bez Tailscale je to jediná cesta k přihlášení)
     keys add <login> "<veřejný klíč>"
                       zapíše klíč, který ti člověk poslal
+    access grant <login> <projekt>
+                      explicitně přiřadí člověka k projektu
 
     mac               vygeneruje instalátor Macu (svázaný s tímhle VPS)
     info              přihlašovací údaje a odkazy
