@@ -103,6 +103,18 @@ class Boundary(unittest.TestCase):
   m=self.manifest(); started=self.call(m); wid=started['work_order_id']; cleaned=[]; self.b._run_cleanup=lambda w:cleaned.append(w['id'])
   self.b.state.db.execute('UPDATE workload SET expires=? WHERE id=?',(1,wid));self.b.state.db.commit();self.b.reap()
   self.assertEqual(self.b.state.get(wid)['state'],'EXPIRED');self.assertEqual(cleaned,[wid])
+ def test_terminal_lifecycle_states_cannot_be_resurrected(self):
+  wid=self.call(self.manifest())['work_order_id']
+  self.b.state.transition(wid,{'RUNNING'},'EXPIRED')
+  for target in ('STARTING','RUNNING','STOPPING','STOPPED','FAILED'):
+   with self.assertRaisesRegex(mod.Reject,'invalid_transition'):
+    self.b.state.transition(wid,{'EXPIRED'},target)
+ def test_stop_of_expired_workload_cleans_without_resurrection(self):
+  wid=self.call(self.manifest())['work_order_id']; cleaned=[]
+  self.b.state.transition(wid,{'RUNNING'},'EXPIRED'); self.b._run_cleanup=lambda w:cleaned.append(w['id'])
+  stopped=self.b.handle({'action':'stop','work_order_id':wid,'device_token':'jwt'},'alice')
+  self.assertTrue(stopped['ok']);self.assertEqual(stopped['state'],'EXPIRED');self.assertEqual(cleaned,[wid])
+  self.assertEqual(self.b.state.get(wid)['state'],'EXPIRED')
  def test_attach_lifecycle_and_stop_authorization(self):
   m=self.manifest(); started=self.call(m); wid=started['work_order_id']
   attach=self.b.handle({'action':'attach','work_order_id':wid,'device_token':'jwt'},'alice'); self.assertTrue(attach['ok']); self.assertTrue(attach['stream'])

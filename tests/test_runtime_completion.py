@@ -15,8 +15,10 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertNotIn('rm -rf /srv/agenticdev/workloads',s);self.assertNotIn('rm -rf /srv/agenticdev/repos',s)
  def test_acceptance_never_converts_skip_to_pass(self):
   s=(ROOT/'tools/acceptance-runtime.sh').read_text()
-  self.assertIn('PASS=',s);self.assertIn('FAIL=',s);self.assertIn('SKIP=',s);self.assertIn('(( F == 0 ))',s)
+  self.assertIn('PASS=',s);self.assertIn('FAIL=',s);self.assertIn('SKIP=',s);self.assertIn('if (( F != 0 )); then exit 1; fi',s)
   self.assertIn('supply dedicated signed acceptance fixture',s)
+  self.assertIn('AGENTICDEV_ACCEPTANCE_REQUIRE_COMPLETE',s)
+  self.assertIn('exit 3',s)
  def test_protocol_actions_have_exact_schemas(self):
   s=(ROOT/'vps/broker.py').read_text()
   for action in ('start','attach','stop','status','resize','probe'):self.assertIn(f'"{action}":',s)
@@ -24,5 +26,10 @@ class RuntimeCompletion(unittest.TestCase):
  def test_git_source_is_only_online_authorization(self):
   s=(ROOT/'vps/broker.py').read_text()
   self.assertIn('a["repo_url"]',s);self.assertNotIn('m["repo"]["url"]',s)
+ def test_lifecycle_has_an_explicit_terminal_state_machine(self):
+  s=(ROOT/'vps/broker.py').read_text()
+  self.assertIn('TRANSITIONS={',s)
+  self.assertIn('new not in TRANSITIONS[current[0]]',s)
+  self.assertIn('"STOPPED":set(),"FAILED":set(),"EXPIRED":set()',s)
 
 if __name__=='__main__':unittest.main()

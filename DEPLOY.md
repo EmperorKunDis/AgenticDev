@@ -300,6 +300,7 @@ uživatele, signed Work Order a device JWT, potom:
 
 ```bash
 export AGENTICDEV_ACCEPTANCE_DISPOSABLE=YES
+export AGENTICDEV_ACCEPTANCE_REQUIRE_COMPLETE=YES
 export ACCEPTANCE_USER=tester ACCEPTANCE_OTHER_USER=tester2
 export DEVICE_TOKEN='<JWT>' ACCEPTANCE_WORK_ORDER=/root/acceptance-work-order.json
 export ACCEPTANCE_CASE_DIR=/root/acceptance-cases
@@ -307,7 +308,11 @@ sudo -E /srv/agenticdev/src/tools/acceptance-runtime.sh
 ```
 
 Výstup používá jen `PASS`, `FAIL`, `SKIP`. Každý `SKIP` má důvod a jakýkoli
-`FAIL` vrací nenulový exit. Bez živého běhu není runtime boundary live-proven.
+`FAIL` vrací nenulový exit. Readiness běh je ve výchozím strict režimu: také
+každý `SKIP` způsobí exit 3, protože neprovedený důkaz nelze vydávat za úplnou
+acceptance. `AGENTICDEV_ACCEPTANCE_REQUIRE_COMPLETE=NO` je určené jen pro
+diagnostický dílčí běh. Bez úplného živého běhu není runtime boundary
+live-proven.
 
 Signed negativní fixtures vytvoř na disposable VPS z čerstvého, dosud
 nespotřebovaného raw Work Orderu:

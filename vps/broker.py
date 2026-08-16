@@ -21,6 +21,13 @@ PROJECT=re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
 REF=re.compile(r"^(?:task/[0-9a-f-]{8,64}/[a-z0-9._/-]+|agenticdev/[a-z0-9._/-]+)$")
 TEMPLATES={"agent-pod-v1"}
 STATES={"CREATED","STARTING","RUNNING","STOPPING","STOPPED","FAILED","EXPIRED"}
+TRANSITIONS={
+ "CREATED":{"STARTING","FAILED","EXPIRED"},
+ "STARTING":{"RUNNING","FAILED","EXPIRED"},
+ "RUNNING":{"STOPPING","FAILED","EXPIRED"},
+ "STOPPING":{"STOPPED","FAILED"},
+ "STOPPED":set(),"FAILED":set(),"EXPIRED":set(),
+}
 ACTION_KEYS={
  "start":{"action","work_order","device_token"},
  "attach":{"action","work_order_id","device_token"},
@@ -70,6 +77,8 @@ class StateStore:
  def transition(self,wid,allowed,new):
   if new not in STATES:raise Reject("invalid_state")
   with self.lock:
+   current=self.db.execute("SELECT state FROM workload WHERE id=?",(wid,)).fetchone()
+   if not current or current[0] not in allowed or new not in TRANSITIONS[current[0]]:raise Reject("invalid_transition")
    marks=','.join('?' for _ in allowed); cur=self.db.execute(f"UPDATE workload SET state=? WHERE id=? AND state IN ({marks})",(new,wid,*allowed))
    if cur.rowcount!=1:raise Reject("invalid_transition")
    self.db.commit()
@@ -137,6 +146,9 @@ class Broker:
   auth=self._post('/v1/broker/authorize',{"work_order":m},token); self._match(m,auth,user); return self.state.get(wid)
  def _stop(self,w,user,reason):
   if w["state"] in ("STOPPED","FAILED"):return {"ok":True,"work_order_id":w["id"],"state":w["state"]}
+  if w["state"]=="EXPIRED":
+   self._run_cleanup(w); self.audit("stop",w["manifest"],"expired_resources_removed",user,"EXPIRED")
+   return {"ok":True,"work_order_id":w["id"],"state":"EXPIRED"}
   self.state.transition(w["id"],{w["state"]},"STOPPING"); self.audit("stop",w["manifest"],reason,user,"STOPPING")
   published=True
   try:

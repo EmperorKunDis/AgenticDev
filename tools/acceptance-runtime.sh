@@ -2,6 +2,7 @@
 # Destructive acceptance test for a CLEAN, ISOLATED, disposable VPS only.
 set -uo pipefail
 P=0 F=0 S=0
+STRICT=${AGENTICDEV_ACCEPTANCE_REQUIRE_COMPLETE:-YES}
 pass(){ echo "PASS $1${2:+ — $2}"; P=$((P+1)); }
 fail(){ echo "FAIL $1${2:+ — $2}"; F=$((F+1)); }
 skip(){ echo "SKIP $1 — $2"; S=$((S+1)); }
@@ -73,4 +74,9 @@ fi
 for c in pid-limit-enforced ram-limit-enforced wall-clock-enforced disk-limit-enforced allowed-proxy-endpoint restricted-cloud-denied alternate-port-denied; do skip "$c" 'supply dedicated signed acceptance fixture and endpoint'; done
 if jq -s -e 'map(.verb)|index("start") and index("attach") and index("stop") and index("reject")' /var/log/agenticdev-broker.jsonl >/dev/null 2>&1; then pass lifecycle-audit; else fail lifecycle-audit missing-events; fi
 echo "SUMMARY PASS=$P FAIL=$F SKIP=$S"
-(( F == 0 ))
+if (( F != 0 )); then exit 1; fi
+if [[ "$STRICT" == YES && $S -ne 0 ]]; then
+ echo "FAIL completeness — $S mandatory checks were not executed (set up every documented fixture; do not waive this on a readiness run)"
+ exit 3
+fi
+exit 0

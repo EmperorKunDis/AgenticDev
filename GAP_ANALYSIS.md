@@ -79,7 +79,8 @@ limitů stále musí potvrdit live acceptance.
 CI provádí broker negativní testy pro podpis, čas, replay, identity,
 membership/kill odmítnutí, traversal/symlink, zakázané runtime vstupy a pevný
 hardening plán, provisioning, attach a lifecycle. Live harness navíc vrací jen
-PASS/FAIL/SKIP a selže na povinném invariantu. Ještě nebyl spuštěn na živé VPS.
+PASS/FAIL/SKIP, selže na povinném invariantu a ve výchozím readiness režimu
+skončí nenulově i při jediném `SKIP`. Ještě nebyl spuštěn na živé VPS.
 
 ### 6. Egress default-deny testy
 
