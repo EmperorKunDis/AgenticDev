@@ -163,15 +163,17 @@ case "${1:-status}" in
           if id "$login" >/dev/null 2>&1; then
             home=$(getent passwd "$login" | cut -d: -f6)
             if ! grep -qxF "$key" "$home/.ssh/authorized_keys" 2>/dev/null; then
-              dc exec -T postgres psql -U agenticdev -d agenticdev -v id="$eid" \
-                -c "UPDATE enrollment SET state='failed',error='login patří jinému klíči' WHERE id=:'id'" >/dev/null
+              printf '%s\n' "\\set id '$eid'" \
+                "UPDATE enrollment SET state='failed',error='login patří jinému klíči' WHERE id=:'id';" \
+                | dc exec -T postgres psql -U agenticdev -d agenticdev >/dev/null
               continue
             fi
           fi
           "$0" user add "$login" "$name" "$mail" >/dev/null
           keys_add "$login" "$key" >/dev/null
-          dc exec -T postgres psql -U agenticdev -d agenticdev -v id="$eid" \
-            -c "UPDATE enrollment SET state='ready',claimed_at=now(),claimed_by='enrollment-worker',error=NULL WHERE id=:'id'" >/dev/null
+          printf '%s\n' "\\set id '$eid'" \
+            "UPDATE enrollment SET state='ready',claimed_at=now(),claimed_by='enrollment-worker',error=NULL WHERE id=:'id';" \
+            | dc exec -T postgres psql -U agenticdev -d agenticdev >/dev/null
           printf "${G}  ✓${O} %s\n" "$login"
         done
         ;;

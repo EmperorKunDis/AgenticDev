@@ -229,14 +229,13 @@ def join(body: JoinRequest, request: Request):
         # Kompatibilita registrační stránky: pouze zapíše kontakt.
         _record_enrollment(first, last, mail, body.os, ip, "", "", "")
 
-    key = _mint_authkey(ip)
+    connect = os.environ.get("AGENTICDEV_CONNECT", "tailscale")
+    key = None if connect == "domain" else _mint_authkey(ip)
     fp = hashlib.sha256(f"{INSTANCE_ID}\n{VERIFY_KEY}".encode()).hexdigest()
 
     # V režimu domain se do tailnetu nikdo nepřipojuje — auth key by byl
     # matoucí krok, který nikam nevede. Stránka podle tohohle pole vynechá
     # celý první krok a rovnou dá instalátor.
-    connect = os.environ.get("AGENTICDEV_CONNECT", "tailscale")
-
     return {
         "ok": True,
         "instance_id": INSTANCE_ID,

@@ -109,10 +109,12 @@ RESP=$(curl -fsS -X POST "$CP/v1/join" -H 'content-type: application/json' -d "$
 ENROLLMENT_ID=$(sed -n 's/.*"enrollment_id":"\([^"]*\)".*/\1/p' <<<"$RESP")
 STATUS_TOKEN=$(sed -n 's/.*"status_token":"\([^"]*\)".*/\1/p' <<<"$RESP")
 [[ -n "$ENROLLMENT_ID" && -n "$STATUS_TOKEN" ]] || die "Server nevrátil potvrzení registrace."
+printf "  účet je ve frontě, čekám na bezpečné vytvoření"
 for _ in {1..30}; do
   STATUS=$(curl -fsS "$CP/join/status/$ENROLLMENT_ID?token=$STATUS_TOKEN" 2>/dev/null || true)
-  [[ "$STATUS" == *'"state":"ready"'* ]] && { ok "účet $LOGIN je připravený"; break; }
-  [[ "$STATUS" == *'"state":"failed"'* ]] && die "Server účet odmítl: $STATUS"
+  [[ "$STATUS" == *'"state":"ready"'* ]] && { printf '\n'; ok "účet $LOGIN je připravený"; break; }
+  [[ "$STATUS" == *'"state":"failed"'* ]] && { printf '\n'; die "Server účet odmítl: $STATUS"; }
+  printf '.'
   sleep 2
 done
 [[ "${STATUS:-}" == *'"state":"ready"'* ]] || die "Vytvoření účtu trvá příliš dlouho; instalaci můžeš bezpečně zopakovat."
