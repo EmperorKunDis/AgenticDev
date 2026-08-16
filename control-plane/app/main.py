@@ -305,7 +305,7 @@ def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: Non
             """SELECT wo.id AS work_order_id, wo.manifest_hash, wo.expires_at, wo.revoked_at,
                       a.state, a.lease_expires_at, w.id AS workstation_id, w.principal_id,
                       w.login AS unix_user, w.revoked_at AS ws_revoked, pr.active AS principal_active,
-                      p.code AS project, t.id AS task_id, ph.kind AS phase, ps.issuing_enabled, ps.epoch,
+                      p.code AS project, p.repo_url, t.id AS task_id, ph.kind AS phase, ps.issuing_enabled, ps.epoch,
                       pm.active AS member_active
                  FROM work_order wo JOIN assignment a ON a.id=wo.assignment_id
                  JOIN workstation w ON w.id=a.workstation_id JOIN principal pr ON pr.id=w.principal_id
@@ -324,7 +324,8 @@ def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: Non
             raise HTTPException(403, "assignment, membership, epoch or identity denied")
         return {"authorized": True, **{k: str(row[k]) for k in
                 ("principal_id", "workstation_id", "project", "task_id", "phase", "work_order_id")},
-                "unix_user": row["unix_user"], "kill_epoch": int(row["epoch"])}
+                "unix_user": row["unix_user"], "kill_epoch": int(row["epoch"]),
+                "repo_url": row["repo_url"]}
 
 
 @app.post("/v1/broker/audit")
@@ -336,6 +337,14 @@ def broker_audit(body: dict, _: None = Depends(_broker)):
                    "broker_" + str(body.get("verb", "reject")), json.dumps(body),
                    f"{body.get('verb')}:{body.get('reason')}:{body.get('ts')}"))
     return {"ok": True}
+
+
+@app.post("/v1/broker/epoch")
+def broker_epoch(_: None = Depends(_broker)):
+    """Minimal broker-only kill epoch check; it exposes no user or project data."""
+    with db() as c:
+        row = c.execute("SELECT issuing_enabled, epoch FROM platform_state WHERE id=1").fetchone()
+    return {"issuing_enabled": bool(row["issuing_enabled"]), "epoch": int(row["epoch"])}
 
 
 @app.post("/v1/work-orders/{wo_id}/heartbeat")

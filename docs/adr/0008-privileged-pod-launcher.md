@@ -1,4 +1,4 @@
-# ADR-0008 (návrh): root-owned broker pro spouštění pracovních podů
+# ADR-0008: root-owned broker pro spouštění pracovních podů
 
 - Stav: **Přijato; první implementace runtime boundary**
 - Datum: 2026-08-15
@@ -85,10 +85,26 @@ symlink v kterékoli odvozené komponentě je odmítnut.
 První backend používá Docker pouze uvnitř root služby. Image, entrypoint,
 network, security flags a mounts jsou pevnou součástí template
 `agent-pod-v1`; klient Docker socket nevidí. Diskový strop používá Docker
-`--storage-opt size` a před produkčním nasazením vyžaduje live ověření podpory
-storage driveru. Interaktivní attach a úplná inicializace broker-owned git
-worktree zůstávají provozními blokery, nikoli bezpečnostním fallbackem: broker
-bez nich workload nespustí použitelně a klient se k Dockeru nevrací.
+`--storage-opt size`. Host je přijat pouze s `overlay2` nad XFS s `pquota` nebo
+`prjquota`, `d_type`, cgroup v2 a seccomp; jinak preflight i instalace končí.
+
+Broker provisionuje root-owned mirror z `repo_url`, které při online autorizaci
+vrátí control plane, a unikátní checkout pod
+`workloads/<principal>/<project>/<task>`. Marker váže existující checkout na
+principal, project, task, branch a mirror; jiná identita nebo symlink znamená
+fail-closed. Git credential zůstává pouze root brokeru a do podu se nemountuje.
+
+Protokol má explicitní schémata `start`, `attach`, `resize`, `status`, `probe`
+a `stop`. Pozdější akce nesou pouze Work Order ID a device JWT. Broker znovu
+ověří peer Unix účet a online autorizaci; klient nikdy nedostane container ID
+ani command. Attach používá broker-owned PTY a jediný pevný příkaz harnessu,
+resize jde samostatnou autorizovanou akcí. Disconnect workload nezastaví.
+
+Stavy jsou `CREATED → STARTING → RUNNING → STOPPING → STOPPED`, s terminálními
+`FAILED` a `EXPIRED`. Deadline reaper odstraňuje kontejnery a sítě. Každý start,
+attach/detach, stop, expiry, failure a reject jde do lokálního i serverového
+auditu. Tyto vlastnosti jsou unit-testované, ale nejsou označeny live-proven,
+dokud neproběhne `tools/acceptance-runtime.sh` na izolované VPS.
 
 ## Acceptance před označením „Přijato"
 

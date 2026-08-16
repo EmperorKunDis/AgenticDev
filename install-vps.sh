@@ -244,7 +244,7 @@ export DEBIAN_FRONTEND=noninteractive
 run "apt update              " apt-get update -qq
 run "instalace nástrojů      " apt-get install -y -qq \
   ca-certificates curl gnupg git jq ufw fail2ban unattended-upgrades \
-  restic openssl rsync python3 python3-cryptography iproute2
+  restic openssl rsync python3 python3-cryptography iproute2 xfsprogs
 
 step "Docker"
 if ! command -v docker >/dev/null; then
@@ -260,6 +260,8 @@ fi
 systemctl enable --now docker >>"$LOG" 2>&1 || true
 docker compose version >/dev/null 2>&1 || die "docker compose plugin chybí"
 ok "$(docker --version | cut -d, -f1)"
+bash "$STAGE/tools/runtime-host-check.sh" >>"$LOG" 2>&1 \
+  || die "host neumí povinné cgroups/overlay2/XFS project quota; viz $LOG"
 
 # ═══════════════════════════════════════════════════════════════════════
 #  3. Jak se k platformě dostanou lidi
@@ -732,6 +734,25 @@ fi
 #  9. Nástroje na VPS
 # ═══════════════════════════════════════════════════════════════════════
 step "Nástroje"
+if [[ ! -f "$ROOT/config/broker_git_key" ]]; then
+  ssh-keygen -q -t ed25519 -N '' -C agenticdev-broker -f "$ROOT/config/broker_git_key"
+fi
+chmod 600 "$ROOT/config/broker_git_key"; chmod 644 "$ROOT/config/broker_git_key.pub"
+ssh-keyscan -p 2222 "$VPS_HOST" >"$ROOT/config/broker_known_hosts" 2>>"$LOG" \
+  || die "nelze připnout Forgejo SSH host key pro broker"
+chmod 600 "$ROOT/config/broker_known_hosts"
+if [[ -n "${FORGEJO_TOKEN:-}" ]]; then
+  PUB=$(cat "$ROOT/config/broker_git_key.pub")
+  if ! curl -fsS "http://$VPS_HOST:3000/api/v1/user/keys" -H "Authorization: token $FORGEJO_TOKEN" \
+       | jq -e --arg k "$PUB" 'any(.[]; .key == $k)' >/dev/null; then
+    curl -fsS -X POST "http://$VPS_HOST:3000/api/v1/user/keys" \
+      -H "Authorization: token $FORGEJO_TOKEN" -H 'content-type: application/json' \
+      -d "$(jq -nc --arg t agenticdev-broker --arg k "$PUB" '{title:$t,key:$k,read_only:false}')" \
+      >/dev/null || die "Forgejo odmítlo broker Git key"
+  fi
+else
+  die "FORGEJO_TOKEN chybí; broker nemůže bezpečně provisionovat Git"
+fi
 getent group agenticdev-broker >/dev/null || groupadd --system agenticdev-broker
 for home in /home/*; do
   [[ -f "$home/.agenticdev/config" ]] || continue
@@ -739,6 +760,8 @@ for home in /home/*; do
   getent group docker >/dev/null && gpasswd -d "$login" docker >/dev/null 2>&1 || true
   getent group sudo >/dev/null && gpasswd -d "$login" sudo >/dev/null 2>&1 || true
   usermod -aG agenticdev-broker "$login"
+  id -nG "$login" | tr ' ' '\n' | grep -qx docker && die "$login zůstal v docker group"
+  id -nG "$login" | tr ' ' '\n' | grep -qx sudo && die "$login zůstal v sudo group"
 done
 install -d -m 0755 /etc/systemd/system/containerd.service.d
 install -m 0644 "$SRC/vps/containerd-agenticdev.conf" \
@@ -746,7 +769,7 @@ install -m 0644 "$SRC/vps/containerd-agenticdev.conf" \
 [[ ! -S /var/run/docker.sock ]] || { chown root:docker /var/run/docker.sock; chmod 0660 /var/run/docker.sock; }
 [[ ! -S /run/containerd/containerd.sock ]] || { chown root:root /run/containerd/containerd.sock; chmod 0600 /run/containerd/containerd.sock; }
 install -d -m 0750 /usr/local/lib/agenticdev
-install -d -m 0750 /var/lib/agenticdev-broker /srv/agenticdev/workloads
+install -d -m 0750 /var/lib/agenticdev-broker /srv/agenticdev/workloads /srv/agenticdev/repos /srv/agenticdev/identities
 install -d -m 0770 -o root -g agenticdev-broker /run/agenticdev
 install -m 0750 "$SRC/vps/broker.py" /usr/local/lib/agenticdev/broker.py
 install -m 0755 "$SRC/vps/broker-client.py" /usr/local/bin/agenticdev-broker-client
@@ -755,6 +778,11 @@ docker build -t agenticdev/pod:installed "$SRC/pod" >>"$LOG" 2>&1
 docker build -t agenticdev/egress:installed "$SRC/pod/egress" >>"$LOG" 2>&1
 systemctl daemon-reload
 systemctl enable --now agenticdev-broker.service >>"$LOG" 2>&1
+systemctl is-active --quiet agenticdev-broker.service || die "privileged broker neběží"
+for _ in $(seq 1 20); do [[ -S /run/agenticdev/broker.sock ]] && break; sleep 1; done
+[[ -S /run/agenticdev/broker.sock ]] || die "broker socket nevznikl"
+[[ "$(stat -c '%a %U %G' /run/agenticdev/broker.sock)" == "660 root agenticdev-broker" ]] \
+  || die "broker socket má nebezpečná práva"
 install -m 0755 "$SRC/vps/agenticdev-ctl" /usr/local/bin/agenticdev-ctl
 # Launcher patří na VPS, protože tam běží pody (ADR-0005). Lidé ho pouštějí
 # po přihlášení přes Tailscale SSH.
