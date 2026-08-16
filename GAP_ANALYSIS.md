@@ -8,8 +8,8 @@ bezpečnostního rozhodování.
 ## Výsledek
 
 **P0 jako celek není připravené k nasazení.** ADR-0008 bylo přijato a první
-runtime boundary je implementované, ale vyžaduje live VPS ověření a dokončení
-interaktivního attach/worktree provisioning. Ostatní P0 bloky zůstávají mimo
+runtime boundary včetně worktree a PTY lifecycle je implementované, ale
+vyžaduje live VPS acceptance. Ostatní P0 bloky zůstávají mimo
 scope této změny.
 
 ## Metoda a hranice důkazu
@@ -37,17 +37,19 @@ scope této změny.
 - Runner je `root` a mountuje `/var/run/docker.sock` v
   `vps/docker-compose.yml`. I když nejde o interaktivní účet zaměstnance,
   nedůvěryhodný workflow má přes socket host-root dopad a sousedí se secrets.
-- Negativní source-level testy změnu dokazují; skutečná práva socketů a group
-  refresh po upgradu musí potvrdit live VPS test.
+- Upgrade po odebrání skupin stav znovu změří a při zbylém členství instalaci
+  shodí; acceptance kontroluje i oba runtime sockety. Skutečný upgrade musí
+  přesto potvrdit live VPS test.
 
 ### 2. Úzký privileged launcher/helper
 
 **NEEDS LIVE VERIFICATION**
 
 `vps/broker.py` a `vps/agenticdev-broker.service` tvoří root-owned boundary.
-Request má pouze `action`, celý immutable `work_order` a `device_token`;
-jakékoli další pole se odmítne. Runtime plán používá pevné images, příkazy,
-sítě a mounty. Chybí živý důkaz systemd hardeningu a funkční interaktivní attach.
+Start přijímá pouze immutable `work_order` a `device_token`; attach/status/
+resize/probe/stop jen Work Order ID, token a u resize rozměry. Každá akce má
+exact-key schema. Broker vlastní Git mirror, checkout, PTY, lifecycle i cleanup.
+Chybí už jen živý důkaz systemd, Docker a kernel enforcementu.
 
 ### 3. Ověřit signed Work Order před spuštěním podu
 
@@ -65,38 +67,40 @@ sítě a mounty. Chybí živý důkaz systemd hardeningu a funkční interaktivn
 
 **NEEDS LIVE VERIFICATION**
 
-Podepsaná template nese CPU, RAM, PID, wall-clock a disk limity. Broker je
-překládá na pevné Docker flags a test kontroluje jejich přítomnost. Skutečné
-vynucení cgroups, timeoutu a `--storage-opt size` musí potvrdit live storage
-driver/cgroup test.
+Podepsaná template nese CPU, RAM, PID, wall-clock a disk limity. Povinný host
+gate odmítne vše kromě cgroup v2, seccomp a overlay2 nad XFS s project quota a
+d_type. Deadline reaper technicky ukončuje workload. Skutečné vyčerpávací testy
+limitů stále musí potvrdit live acceptance.
 
 ### 5. Skutečné sandbox adversarial testy
 
 **PARTIAL**
 
-CI nově provádí broker negativní testy pro podpis, čas, replay, identity,
+CI provádí broker negativní testy pro podpis, čas, replay, identity,
 membership/kill odmítnutí, traversal/symlink, zakázané runtime vstupy a pevný
-hardening plán. Útoky ze skutečně běžícího kontejneru stále vyžadují live VPS.
+hardening plán, provisioning, attach a lifecycle. Live harness navíc vrací jen
+PASS/FAIL/SKIP, selže na povinném invariantu a ve výchozím readiness režimu
+skončí nenulově i při jediném `SKIP`. Ještě nebyl spuštěn na živé VPS.
 
 ### 6. Egress default-deny testy
 
 **PARTIAL**
 
-`pod/compose.yaml` dává pod pouze na `internal: true` síť a
-`pod/egress/entrypoint.sh` generuje tinyproxy konfiguraci s
-`FilterDefaultDeny Yes`; prázdný seznam tedy staticky vypadá fail-closed.
-Neexistuje však integrační test, který z podu prokáže blokaci přímé IP, DNS,
-nepovolené domény, suffix-confusion, alternativních portů, IPv6 a proxy bypassu
-a současně průchod explicitně povoleného cíle.
+Broker dává pod pouze na `internal` síť a jediný dual-homed kontejner je pevná
+tinyproxy s `FilterDefaultDeny Yes`. Fixed live probe zkouší přímou veřejnou IP,
+DNS a IPv6 bypass; acceptance výslovně nechává `SKIP` pro nepřipravený povolený
+endpoint, alternativní port a restricted cloud fixture. Suite ještě neběžela
+na živé VPS, proto bod zůstává `PARTIAL`.
 
 ### 7. Cross-user a cross-project isolation
 
 **PARTIAL**
 
 `project_member` nyní filtruje project list/bundle, issuance i broker online
-authorization. Host paths vznikají z principal/project/task ID pod root-owned
-kořenem a symlink/traversal se odmítá. Cross-user/cross-project pokusy jsou
-unit-testované; čtení z reálného adversarial podu vyžaduje live VPS.
+authorization. Git mirror bere URL pouze z online server metadata; každý
+principal/project/task má vlastní markerem svázaný checkout a XFS project quota.
+Host paths vznikají z validovaných ID a symlink/traversal se odmítá. Cross-user,
+cross-project a reentrant provisioning jsou testované; live pod důkaz chybí.
 
 ### 8. Expirovatelné single-use enrollment tokeny
 
@@ -189,9 +193,8 @@ Chybí auditní událost i idempotentní test.
 
 ## Blokující závislosti a pořadí P0
 
-1. Na izolované VPS ověřit přijatý broker backend, systemd/socket permissions,
-   cgroups, storage driver, síť a adversarial workload; dokončit interaktivní
-   attach a bezpečné naplnění broker-owned worktree.
+1. Na izolované VPS spustit `tools/acceptance-runtime.sh` a ověřit broker,
+   systemd/socket, Git provisioning, PTY, cgroups, storage a adversarial pod.
 2. Autorizační model principal↔project je zaveden; samostatný další P0 blok musí
    později doplnit jednorázové enrollment credentials a offboarding.
 3. Podepsaný Work Order a immutable runtime template jsou implementovány;
@@ -221,7 +224,7 @@ Chybí auditní událost i idempotentní test.
 
 Zdrojový strom již uživateli Docker oprávnění nedává, ale bez live upgrade testu
 nelze potvrdit odstranění starých supplementary groups ani práva socketů.
-Broker backend zatím nemá použitelný interaktivní attach a broker-owned git
-provisioning. Docker `--storage-opt size` závisí na storage driveru a musí být
-ověřen. Forgejo runner nadále drží host Docker socket (oddělený P0 blok) a
+Broker-owned Git, PTY a lifecycle jsou implementované, ne však live-proven.
+XFS project quota a skutečné vyčerpání limitů musí být ověřeny acceptance
+runem. Forgejo runner nadále drží host Docker socket (oddělený P0 blok) a
 ostatní readiness mezery z této matice zůstávají. P0 proto není ready.

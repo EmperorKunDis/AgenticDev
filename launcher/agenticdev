@@ -18,11 +18,6 @@ set -euo pipefail
 CFG_DIR="${AGENTICDEV_HOME:-$HOME/.agenticdev}"
 CFG="$CFG_DIR/config"
 WORK_ROOT="${AGENTICDEV_WORK_ROOT:-$HOME/AgenticDev}"
-# Přihlášení k modelu a transkripty. Jeden adresář na člověka, protože
-# auth.json je jeden soubor a Pi si tokeny obnovuje sám — sdílený by si
-# dva lidé přepisovali navzájem.
-PI_DIR="${AGENTICDEV_PI_DIR:-$HOME/.pi/agent}"
-
 B='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; D='\033[2m'; O='\033[0m'
 c()    { printf "${B}▸ %s${O}\n" "$*"; }
 ok()   { printf "${G}✓ %s${O}\n" "$*"; }
@@ -166,9 +161,15 @@ DEC
   command -v agenticdev-broker-client >/dev/null \
     || die "Chybí klient privilegovaného brokeru; kontaktuj správce."
   c "Startuji pod přes privilegovaný broker"
-  AGENTICDEV_DEVICE_TOKEN="$t" jq -c '.work_order' <<<"$wo" | \
-    AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client \
-    || die "Broker workload odmítl nebo bezpečně ukončil."
+  local started
+  started=$(AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client start \
+    <<<"$(jq -c '.work_order' <<<"$wo")") \
+    || die "Broker workload odmítl."
+  wo_id=$(jq -r '.work_order_id' <<<"$started")
+  AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client attach "$wo_id" \
+    || die "Attach selhal nebo byl workload revokován."
+  AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client stop "$wo_id" >/dev/null \
+    || warn "Broker workload bezpečně neukončil; kontaktuj správce."
 
   # Broker vlastní lifecycle, teardown i audit. Klient nemá container ID ani
   # oprávnění volat runtime přímo.
@@ -253,11 +254,7 @@ cmd_doctor() {
     command -v $t >/dev/null && ok "$t" || { warn "chybí: $t"; bad=1; }
   done
   command -v agenticdev-broker-client >/dev/null && ok "privilegovaný broker" || { warn "broker klient chybí"; bad=1; }
-  if [[ -f "$PI_DIR/auth.json" ]]; then
-    ok "přihlášení k modelu ($PI_DIR)"
-  else
-    warn "nejsi přihlášený k modelu — v Pi použij /login (stačí jednou)"
-  fi
+  ok "modelové přihlášení spravuje broker per principal (v Pi případně /login)"
   command -v tailscale >/dev/null && ok "tailscale" || warn "tailscale"
   if [[ -f "$CFG" ]]; then
     ok "konfigurace"

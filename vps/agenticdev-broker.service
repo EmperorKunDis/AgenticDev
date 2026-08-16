@@ -13,10 +13,21 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
-ReadWritePaths=/run/agenticdev /var/lib/agenticdev-broker /var/log /srv/agenticdev/workloads
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+LockPersonality=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=CAP_CHOWN CAP_DAC_OVERRIDE CAP_FOWNER CAP_SYS_ADMIN
+ReadWritePaths=/run/agenticdev /var/lib/agenticdev-broker /var/log /srv/agenticdev/workloads /srv/agenticdev/repos /srv/agenticdev/identities
 RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
 SystemCallArchitectures=native
 UMask=0007
+RuntimeDirectory=agenticdev
+RuntimeDirectoryMode=0770
+StateDirectory=agenticdev-broker
+StateDirectoryMode=0700
 Restart=on-failure
 
 [Install]
