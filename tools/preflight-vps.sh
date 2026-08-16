@@ -109,14 +109,34 @@ command -v docker >/dev/null && ok "docker $(docker --version 2>/dev/null | cut 
 if command -v tailscale >/dev/null; then
   TS_IP=$(tailscale ip -4 2>/dev/null | head -1)
   [[ -n "$TS_IP" ]] && ok "tailscale připojený, IP $TS_IP" \
-    || soft "tailscale nainstalovaný, ale nepřipojený — 'tailscale up --ssh'"
+    || { [[ "${AGENTICDEV_CONNECT_EXPECTED:-}" == tailscale ]] \
+         && bad "Tailscale režim vyžaduje připojený tailnet" \
+         || soft "tailscale nainstalovaný, ale nepřipojený — 'tailscale up --ssh'"; }
 else
-  info "tailscale nainstaluje instalátor"
+  [[ "${AGENTICDEV_CONNECT_EXPECTED:-}" == tailscale ]] \
+    && bad "Tailscale režim byl zvolen, ale tailscale chybí" \
+    || info "tailscale nainstaluje instalátor"
 fi
 if command -v apparmor_status >/dev/null 2>&1 || [[ -d /sys/kernel/security/apparmor ]]; then
   ok "apparmor je k dispozici"
 else
   soft "apparmor nenalezen — kontejnery pojedou bez jeho profilu"
+fi
+
+# ─── Runtime security boundary ────────────────────────────────
+hdr "Runtime security boundary"
+if command -v docker >/dev/null; then
+  if bash "$(dirname "$0")/runtime-host-check.sh"; then
+    ok "cgroups, namespaces, seccomp a disk quota jsou vymahatelné"
+  else
+    bad "host neumí povinné runtime invarianty; instalace nesmí pokračovat"
+  fi
+else
+  # Ještě před instalací lze ověřit kernel/systemd; definitivní storage gate
+  # proběhne v instalátoru ihned po instalaci Dockeru.
+  [[ -d /run/systemd/system ]] || bad "systemd je povinný"
+  [[ "$(stat -fc %T /sys/fs/cgroup 2>/dev/null)" == cgroup2fs ]] || bad "cgroup v2 je povinný"
+  soft "Docker ještě není nainstalovaný; installer po instalaci povinně ověří overlay2/XFS pquota"
 fi
 
 # ─── Síť ───────────────────────────────────────────────────────

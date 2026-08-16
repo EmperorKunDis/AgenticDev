@@ -6,10 +6,12 @@ Záměrně bez ORM: schéma je zdroj pravdy, ne Python třídy.
 """
 from __future__ import annotations
 
-import base64, hashlib, json, os, uuid
+import base64, hashlib, json, os, secrets, uuid
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 
 import jwt
+import httpx
 import psycopg
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -22,6 +24,11 @@ JWT_SECRET  = os.environ["JWT_SECRET"]
 GIT_BASE    = os.environ.get("GIT_BASE", "ssh://git@localhost:2222")
 DEF_MODEL   = os.environ.get("DEFAULT_MODEL", "gpt-5.5")
 LEASE_HOURS = int(os.environ.get("LEASE_HOURS", "4"))
+INSTANCE_ID = os.environ.get("AGENTICDEV_INSTANCE_ID", "")
+BROKER_SECRET = os.environ.get("BROKER_SECRET", "")
+CONTROL_PLANE_URL = os.environ.get("CONTROL_PLANE_URL", "http://control-plane:8080")
+FORGEJO_URL = os.environ.get("FORGEJO_URL", "http://forgejo:3000")
+FORGEJO_TOKEN = os.environ.get("FORGEJO_TOKEN", "")
 
 _SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(
     base64.b64decode(os.environ["WO_SIGNING_KEY_B64"])
@@ -173,7 +180,7 @@ def _build_context_bundle(c, project: dict, task: dict) -> dict:
 
 
 @app.get("/v1/work-orders/next")
-def next_work_order(ws: dict = Depends(current_ws)):
+def next_work_order(project: str, ws: dict = Depends(current_ws)):
     with db() as c:
         state = c.execute("SELECT * FROM platform_state WHERE id = 1").fetchone()
         if not state["issuing_enabled"]:
@@ -185,9 +192,11 @@ def next_work_order(ws: dict = Depends(current_ws)):
                FROM task t
                JOIN phase p   ON p.id = t.phase_id
                JOIN project pr ON pr.id = p.project_id
+               JOIN project_member pm ON pm.project_id=pr.id
                WHERE t.state = 'ready' AND pr.active AND p.active
+                 AND pr.code=%s AND pm.principal_id=%s AND pm.active
                ORDER BY t.priority, t.created_at
-               FOR UPDATE OF t SKIP LOCKED LIMIT 1"""
+               FOR UPDATE OF t SKIP LOCKED LIMIT 1""", (project, ws["principal_id"])
         ).fetchone()
         if not task:
             return {"work_order": None, "reason": "žádný úkol ve stavu ready"}
@@ -208,16 +217,28 @@ def next_work_order(ws: dict = Depends(current_ws)):
         bundle = _build_context_bundle(c, task, task)
         models = task["model_allowlist"] or [DEF_MODEL]
 
+        unix_user = ws.get("login")
+        if not unix_user:
+            raise HTTPException(409, "workstation nemá serverový unix login")
         manifest = {
+            "schema": "agenticdev.work-order/v1",
+            "issuer": INSTANCE_ID,
+            "key_id": "primary",
             "work_order_id": str(uuid.uuid4()),
+            "nonce": secrets.token_urlsafe(32),
             "issued_at": now().isoformat(),
+            "not_before": now().isoformat(),
             "expires_at": expires.isoformat(),
+            "kill_epoch": int(state["epoch"]),
+            "subject": {"principal_id": str(ws["principal_id"]),
+                        "workstation_id": str(ws["id"]), "unix_user": unix_user},
             "task": {
                 "id": str(task["task_id"]),
                 "project": task["code"],
                 "phase": task["phase_kind"],
                 "kind": task["kind"],
                 "risk_class": task["risk"],
+                "data_class": task["data_class"],
                 "title": task["title"],
                 "spec_ref": task["spec_ref"],
                 "dod": task["dod"],
@@ -230,23 +251,16 @@ def next_work_order(ws: dict = Depends(current_ws)):
             },
             "context_bundle": bundle,
             "runtime": {
-                "compose": {"ref": f"pods/{task['code']}/compose.yaml@main"},
-                "harness": ({"image": harness["image_digest"],
-                             "api_version": harness["semver"]} if harness else None),
-                "director": ({
-                    "id": director["director_id"],
-                    "version": director["semver"],
-                    "channel": director["channel"],
-                    "uri": director["uri"],
-                    "sha256": director["sha256"],
-                    "requires_harness": director["requires_harness"],
-                } if director else None),
+                "template": "agent-pod-v1",
+                "limits": {"cpus": "2", "memory_mb": 4096, "pids": 512,
+                           "wall_seconds": 14400, "disk_mb": 10240},
             },
             "worker_pool": [
                 {"role": r, "profile": f"{r}@0.1.0"}
                 for r in ("architect", "implementer", "tester", "reviewer")
             ],
             "policy": {
+                "control_plane": CONTROL_PLANE_URL,
                 "model_allowlist": models,
                 "egress_allowlist": os.environ.get(
                     "EGRESS_ALLOWLIST",
@@ -255,8 +269,9 @@ def next_work_order(ws: dict = Depends(current_ws)):
                 "max_wall_clock_min": 240,
                 "budget_czk_total": float(task["budget_czk"]),
                 "max_loop_iterations": {"implement_test": 5, "review_rework": 3},
+                "budget_tokens": 120_000,
             },
-            "telemetry": {"endpoint": "/v1/events"},
+            "telemetry": {"endpoint": CONTROL_PLANE_URL.rstrip("/") + "/v1/events"},
         }
 
         payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
@@ -277,6 +292,92 @@ def next_work_order(ws: dict = Depends(current_ws)):
               {"work_order": manifest["work_order_id"]}, manifest["work_order_id"])
 
     return {"work_order": manifest}
+
+
+def _broker(x_agenticdev_broker: str = Header(default="")) -> None:
+    if not BROKER_SECRET or not secrets.compare_digest(x_agenticdev_broker, BROKER_SECRET):
+        raise HTTPException(403, "broker authentication failed")
+
+
+class BrokerRequest(BaseModel):
+    work_order: dict
+
+
+@app.post("/v1/broker/authorize")
+def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: None = Depends(_broker)):
+    m = body.work_order
+    with db() as c:
+        row = c.execute(
+            """SELECT wo.id AS work_order_id, wo.manifest_hash, wo.expires_at, wo.revoked_at,
+                      a.state, a.lease_expires_at, w.id AS workstation_id, w.principal_id,
+                      w.login AS unix_user, w.revoked_at AS ws_revoked, pr.active AS principal_active,
+                      p.code AS project, p.repo_url, p.data_class, t.id AS task_id, ph.kind AS phase, ps.issuing_enabled, ps.epoch,
+                      pm.active AS member_active
+                 FROM work_order wo JOIN assignment a ON a.id=wo.assignment_id
+                 JOIN workstation w ON w.id=a.workstation_id JOIN principal pr ON pr.id=w.principal_id
+                 JOIN task t ON t.id=a.task_id JOIN phase ph ON ph.id=t.phase_id
+                 JOIN project p ON p.id=ph.project_id
+                 LEFT JOIN project_member pm ON pm.project_id=p.id AND pm.principal_id=w.principal_id
+                 CROSS JOIN platform_state ps
+                WHERE wo.id=%s""", (m.get("work_order_id"),)).fetchone()
+        unsigned = {k: v for k, v in m.items() if k != "signature"}
+        digest = hashlib.sha256(json.dumps(unsigned, sort_keys=True, separators=(",", ":")).encode()).hexdigest()
+        if (not row or str(row["workstation_id"]) != str(ws["id"]) or row["manifest_hash"] != digest or
+                row["revoked_at"] or row["ws_revoked"] or not row["principal_active"] or
+                not row["member_active"] or row["state"] != "active" or
+                row["lease_expires_at"] <= now() or row["expires_at"] <= now() or
+                not row["issuing_enabled"] or int(row["epoch"]) != m.get("kill_epoch")):
+            raise HTTPException(403, "assignment, membership, epoch or identity denied")
+        configured={x.strip() for x in os.environ.get("EGRESS_ALLOWLIST","").split(",") if x.strip()}
+        signed=set(m.get("policy",{}).get("egress_allowlist") or [])
+        mandatory={urlparse(CONTROL_PLANE_URL).hostname}
+        live=(signed & configured) | {x for x in mandatory if x}
+        if str(row["data_class"])=="restricted":live -= {"api.openai.com","api.anthropic.com","generativelanguage.googleapis.com"}
+        return {"authorized": True, **{k: str(row[k]) for k in
+                ("principal_id", "workstation_id", "project", "task_id", "phase", "work_order_id")},
+                "unix_user": row["unix_user"], "kill_epoch": int(row["epoch"]),
+                "repo_url": row["repo_url"],"egress_allowlist":sorted(live)}
+
+class BrokerPullRequest(BaseModel):
+    work_order_id: str
+    project: str
+    branch: str
+
+@app.post("/v1/broker/pull-request")
+def broker_pull_request(body: BrokerPullRequest, _: None = Depends(_broker)):
+    if not FORGEJO_TOKEN:
+        raise HTTPException(503,"Forgejo broker credential unavailable")
+    with db() as c:
+        row=c.execute("""SELECT p.repo_url,t.title,wo.manifest FROM work_order wo JOIN assignment a ON a.id=wo.assignment_id
+          JOIN task t ON t.id=a.task_id JOIN phase ph ON ph.id=t.phase_id JOIN project p ON p.id=ph.project_id
+          WHERE wo.id=%s AND p.code=%s""",(body.work_order_id,body.project)).fetchone()
+    expected=(row["manifest"].get("repo") or {}).get("work_branch") if row else None
+    if not row or body.branch!=expected:raise HTTPException(403,"pull request identity denied")
+    path=urlparse(row["repo_url"]).path.removesuffix('.git').strip('/').split('/')
+    if len(path)!=2:raise HTTPException(503,"unsupported server repository identity")
+    response=httpx.post(f"{FORGEJO_URL}/api/v1/repos/{path[0]}/{path[1]}/pulls",
+      headers={"Authorization":f"token {FORGEJO_TOKEN}"},json={"head":body.branch,"base":"main","title":row["title"]},timeout=20)
+    if response.status_code not in (201,409):raise HTTPException(502,"Forgejo pull request creation failed")
+    return {"ok":True}
+
+
+@app.post("/v1/broker/audit")
+def broker_audit(body: dict, _: None = Depends(_broker)):
+    with db() as c:
+        c.execute("""INSERT INTO event (actor_id,subject_type,subject_id,verb,payload,dedupe_key)
+                     VALUES (%s,'work_order',%s,%s,%s,%s) ON CONFLICT DO NOTHING""",
+                  (body.get("principal_id"), body.get("work_order_id") or "unknown",
+                   "broker_" + str(body.get("verb", "reject")), json.dumps(body),
+                   f"{body.get('verb')}:{body.get('reason')}:{body.get('ts')}"))
+    return {"ok": True}
+
+
+@app.post("/v1/broker/epoch")
+def broker_epoch(_: None = Depends(_broker)):
+    """Minimal broker-only kill epoch check; it exposes no user or project data."""
+    with db() as c:
+        row = c.execute("SELECT issuing_enabled, epoch FROM platform_state WHERE id=1").fetchone()
+    return {"issuing_enabled": bool(row["issuing_enabled"]), "epoch": int(row["epoch"])}
 
 
 @app.post("/v1/work-orders/{wo_id}/heartbeat")

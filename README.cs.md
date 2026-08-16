@@ -158,6 +158,12 @@ ukazuje jen ke čtení.
 
 ---
 
+> Běžný účet na VPS není v `docker` ani `sudo`. Podepsaný Work Order ověřuje
+> root-owned broker, který vlastní Git worktree, runtime konfiguraci i PTY.
+> Launcher nikdy nedostane Docker socket, container ID, host path ani generický
+> root příkaz. Dokud neproběhne runbook v `DEPLOY.md` na izolované VPS, není
+> boundary označena jako live-proven.
+
 ## Denní práce
 
 **Klikneš na AgenticDev v Docku.** Otevře se Ghostty, vybereš projekt
@@ -197,7 +203,7 @@ agenticdev-git list
 cd "$(agenticdev-git switch zaokrouhleni)"
 ```
 
-Rozdělané úkoly leží fyzicky vedle sebe v `~/AgenticDev/.agenticdev-trees/`.
+Rozdělané worktrees vlastní broker pod `/srv/agenticdev/workloads/<principal>/<projekt>/<task>`; běžný účet host cestu neurčuje ani do ní mimo pod nevstupuje.
 
 ---
 

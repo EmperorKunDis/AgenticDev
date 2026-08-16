@@ -221,11 +221,12 @@ The first time, they sign in to a model inside Pi with `/login` — their own
 subscription or key. It stays in their own `~/.pi/agent` and is not shared,
 so two people can work at once and each pays for their own usage.
 
-> **An account on the VPS needs the `docker` group, and that is equivalent to
-> root on that machine** — through the Docker socket you can read
-> `/srv/agenticdev/config/.env`, which holds the signing key and every other
-> secret. Fine for a small team that trusts itself. Do not give an account to
-> anyone you would not give root.
+> Ordinary VPS accounts are removed from `docker` and `sudo`. A root-owned,
+> narrow broker verifies a signed Work Order and online assignment before it
+> provisions a server-owned Git worktree and starts the fixed sandbox template.
+> The client never receives Docker access, a container ID, a host path or a
+> generic command capability. Run the disposable-VPS acceptance procedure in
+> `DEPLOY.md` before treating the boundary as live-proven.
 
 **What is actually exposed to the internet:** exactly one path — the
 enrollment page — published through [Tailscale
@@ -256,7 +257,7 @@ a shell on the VPS:
 ```bash
 agenticdev work                 # pick a project, get a task, start a pod
 agenticdev work acme            # straight to one project
-agenticdev doctor               # check Docker access and model login
+agenticdev doctor               # check broker access and model login
 ```
 
 `adev` works as a shorthand for `agenticdev`.

@@ -191,6 +191,7 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       WO_VERIFY_KEY_B64: ${WO_VERIFY_KEY_B64:-}
+      BROKER_SECRET: ${BROKER_SECRET:?chybi BROKER_SECRET}
       CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-}
       LEASE_HOURS: ${LEASE_HOURS:-4}
       # ─── veřejná registrace (Tailscale Funnel → /join) ───────────
