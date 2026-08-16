@@ -759,6 +759,7 @@ for home in /home/*; do
   login=$(basename "$home")
   getent group docker >/dev/null && gpasswd -d "$login" docker >/dev/null 2>&1 || true
   getent group sudo >/dev/null && gpasswd -d "$login" sudo >/dev/null 2>&1 || true
+  loginctl terminate-user "$login" >/dev/null 2>&1 || true
   usermod -aG agenticdev-broker "$login"
   id -nG "$login" | tr ' ' '\n' | grep -qx docker && die "$login zůstal v docker group"
   id -nG "$login" | tr ' ' '\n' | grep -qx sudo && die "$login zůstal v sudo group"

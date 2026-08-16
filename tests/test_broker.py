@@ -1,8 +1,8 @@
 from __future__ import annotations
 import base64, importlib.util, json, os, sys, tempfile, unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
-from unittest import mock
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 ROOT=Path(__file__).parents[1]
@@ -11,15 +11,17 @@ P='11111111-1111-4111-8111-111111111111'; W='22222222-2222-4222-8222-22222222222
 class Boundary(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name); (self.root/'workloads').mkdir(); (self.root/'repos').mkdir()
-  self.env=mock.patch.dict(os.environ,{'AGENTICDEV_WORK_ROOT':str(self.root/'workloads'),'AGENTICDEV_REPO_ROOT':str(self.root/'repos'),'AGENTICDEV_BROKER_STATE':str(self.root/'state')},clear=False); self.env.start()
+  self.env=mock.patch.dict(os.environ,{'AGENTICDEV_WORK_ROOT':str(self.root/'workloads'),'AGENTICDEV_REPO_ROOT':str(self.root/'repos'),'AGENTICDEV_BROKER_STATE':str(self.root/'state')}); self.env.start()
+  self.chown_patcher=mock.patch.object(mod.os,'chown'); self.chown=self.chown_patcher.start()
   self.private=Ed25519PrivateKey.generate(); public=self.private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw); self.plans=[]
-  self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':1000,'pw_gid':1000,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}; self.b._chown_tree=lambda *args:None
+  self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':1000,'pw_gid':1000,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}
  def fake_git(self,cmd):
   if 'clone' not in cmd:return
   target=Path(cmd[-1]); target.mkdir(parents=True,exist_ok=True)
   if '--mirror' in cmd:(target/'HEAD').write_text('ref: refs/heads/main')
   else:(target/'.git').mkdir(exist_ok=True)
- def tearDown(self): self.b.state.db.close(); self.env.stop(); self.tmp.cleanup()
+ def tearDown(self):
+  self.b.state.db.close(); self.chown_patcher.stop(); self.env.stop(); self.tmp.cleanup()
  @staticmethod
  def ts(d): return datetime.fromtimestamp(2_000_000_000+d,timezone.utc).isoformat()
  def manifest(self,**changes):
@@ -28,7 +30,8 @@ class Boundary(unittest.TestCase):
  def authorize(self,path,body,token):
   if path.endswith('audit'): return {'ok':True}
   if path.endswith('epoch'): return {'issuing_enabled':True,'epoch':7}
-  m=body['work_order']; return {'authorized':True,'principal_id':m['subject']['principal_id'],'workstation_id':m['subject']['workstation_id'],'unix_user':'alice','project':m['task']['project'],'task_id':m['task']['id'],'phase':m['task']['phase'],'work_order_id':m['work_order_id'],'kill_epoch':m['kill_epoch'],'repo_url':'ssh://server/alpha.git'}
+  if path.endswith('pull-request'): return {'ok':True}
+  m=body['work_order']; return {'authorized':True,'principal_id':m['subject']['principal_id'],'workstation_id':m['subject']['workstation_id'],'unix_user':'alice','project':m['task']['project'],'task_id':m['task']['id'],'phase':m['task']['phase'],'work_order_id':m['work_order_id'],'kill_epoch':m['kill_epoch'],'repo_url':'ssh://server/alpha.git','egress_allowlist':['api.example.test','control-plane']}
  def call(self,m,user='alice',extra=None):
   r={'action':'start','work_order':m,'device_token':'jwt'}; r.update(extra or {}); return self.b.handle(r,user)
  def reject(self,m,reason,**kw):
@@ -70,6 +73,7 @@ class Boundary(unittest.TestCase):
   self.assertTrue(self.call(self.manifest())['ok']); flat='\n'.join(' '.join(c) for c in self.plans[0])
   for x in ('--user 1000:1000','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HTTP_PROXY=http://egress:8888','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
   for x in ('/srv/agenticdev/config','/etc','/var/run/docker.sock','--privileged','--pid=host','--network=host'): self.assertNotIn(x,flat)
+  self.assertNotIn('docker cp',flat);self.assertNotIn('docker exec --user 0',flat)
  def plan_text(self):
   self.assertTrue(self.call(self.manifest())["ok"]); return "\n".join(" ".join(c) for c in self.plans[0])
  def test_pod_cannot_mount_server_secrets_or_runtime_socket(self):
@@ -78,6 +82,28 @@ class Boundary(unittest.TestCase):
   flat=self.plan_text(); self.assertIn(P+"/alpha/"+T,flat); self.assertNotIn("22222222-1111-4111-8111-111111111111",flat); self.assertNotIn("/other/",flat)
  def test_workspace_root_read_only_and_only_scope_rw(self):
   flat=self.plan_text(); self.assertIn("dst=/workspace,readonly",flat); self.assertIn("dst=/workspace/src",flat); self.assertNotIn("dst=/workspace/etc",flat)
+ def test_worktree_permissions_are_read_only_except_explicit_scope(self):
+  m=self.manifest();a=self.authorize('/v1/broker/authorize',{'work_order':m},'jwt');work=self.b.provision(m,a,'jwt')
+  self.assertEqual(work.stat().st_mode & 0o777,0o550);self.assertEqual((work/'src').stat().st_mode & 0o777,0o700);self.assertEqual((work/'.agenticdev').stat().st_mode & 0o777,0o700)
+ def test_runtime_files_are_preowned_and_read_only(self):
+  self.call(self.manifest());flat='\n'.join(' '.join(c) for c in self.plans[0]);run=self.root/'state'/WO
+  self.assertEqual((run/'work-order.json').stat().st_mode & 0o777,0o400);self.assertEqual((run/'token').stat().st_mode & 0o777,0o400)
+  self.assertIn('dst=/run/agenticdev/work-order.json,readonly',flat);self.assertIn('dst=/run/agenticdev/token,readonly',flat);self.assertIn('--cap-drop ALL',flat)
+ def test_cleanup_failure_stays_retryable_and_reaper_retries(self):
+  wid=self.call(self.manifest())['work_order_id'];self.b._publish=lambda w:None
+  self.b._run_cleanup=mock.Mock(side_effect=[mod.Reject('cleanup_incomplete'),None])
+  rejected=self.b.handle({'action':'stop','work_order_id':wid,'device_token':'jwt'},'alice')
+  self.assertEqual(rejected['reason'],'cleanup_incomplete');self.assertEqual(self.b.state.get(wid)['state'],'STOPPING')
+  self.b.reap();self.assertEqual(self.b.state.get(wid)['state'],'STOPPED');self.assertEqual(self.b._run_cleanup.call_count,2)
+ def test_cleanup_verifies_resources_are_absent(self):
+  result=type('R',(),{'returncode':0})()
+  with mock.patch.object(mod.subprocess,'run',return_value=result):
+   with self.assertRaisesRegex(mod.Reject,'cleanup_incomplete'):self.b._run_cleanup({'id':WO,'container':'agenticdev-'+WO})
+ def test_silent_socket_client_hits_read_deadline(self):
+  left,right=mod.socket.socketpair()
+  try:
+   with self.assertRaisesRegex(mod.Reject,'request_timeout'):mod.recv_request(left,0.01)
+  finally:left.close();right.close()
  def test_pod_network_is_internal_and_proxy_mandatory(self):
   flat=self.plan_text(); self.assertIn("network create --internal",flat); self.assertIn("HTTP_PROXY=http://egress:8888",flat); self.assertNotIn("--network host",flat)
  def test_narrow_protocol(self): self.reject(self.manifest(),'narrow_protocol_violation',extra={'command':'sh'})

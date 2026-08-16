@@ -9,6 +9,7 @@ into the broker.
 from __future__ import annotations
 
 import base64, fcntl, hashlib, json, os, pty, pwd, re, select, shutil, signal, socket, sqlite3, struct, subprocess, termios, threading, time, urllib.error, urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -86,6 +87,8 @@ class StateStore:
   with self.lock:return [r[0] for r in self.db.execute("SELECT id FROM workload WHERE expires<=? AND state IN ('CREATED','STARTING','RUNNING')",(now,)).fetchall()]
  def active(self):
   with self.lock:return [r[0] for r in self.db.execute("SELECT id FROM workload WHERE state IN ('CREATED','STARTING','RUNNING')").fetchall()]
+ def stopping(self):
+  with self.lock:return [r[0] for r in self.db.execute("SELECT id FROM workload WHERE state='STOPPING'").fetchall()]
  def quota_id(self,path):
   with self.lock:
    self.db.execute("INSERT OR IGNORE INTO quota(path) VALUES(?)",(str(path),));self.db.commit();return self.db.execute("SELECT id FROM quota WHERE path=?",(str(path),)).fetchone()[0]+10000
@@ -132,7 +135,7 @@ class Broker:
   if not isinstance(r["device_token"],str):raise Reject("invalid_request")
   self._verify(m,user); auth=self._post('/v1/broker/authorize',{"work_order":m},r["device_token"]); self._match(m,auth,user); self.state.consume(m["nonce"])
   work=self.provision(m,auth,r["device_token"]); name="agenticdev-"+m["work_order_id"]; self.state.create(m,name,work,self.clock()); self.audit("created",m,"worktree_ready",user,"CREATED"); self.state.transition(m["work_order_id"],{"CREATED"},"STARTING"); self.audit("start",m,"provisioned",user,"STARTING")
-  try:self.runner(self.runtime_plan(m,work,r["device_token"])); self.state.transition(m["work_order_id"],{"STARTING"},"RUNNING")
+  try:self.runner(self.runtime_plan(m,work,r["device_token"],auth)); self.state.transition(m["work_order_id"],{"STARTING"},"RUNNING")
   except Exception as e:
    self.state.transition(m["work_order_id"],{"STARTING"},"FAILED"); self.audit("failed",m,"runtime_start_failed",user,"FAILED"); raise Reject("runtime_start_failed") from e
   self.audit("running",m,"started",user,"RUNNING"); return {"ok":True,"work_order_id":m["work_order_id"],"state":"RUNNING"}
@@ -141,7 +144,6 @@ class Broker:
   w=self.state.get(wid); m=w["manifest"]
   if w["unix_user"]!=user:raise Reject("wrong_user")
   if w["expires"]<=self.clock():
-   if w["state"] not in ("STOPPED","FAILED","EXPIRED"):self.state.transition(wid,{w["state"]},"EXPIRED")
    if not allow_expired:raise Reject("expired_workload")
   auth=self._post('/v1/broker/authorize',{"work_order":m},token); self._match(m,auth,user); return self.state.get(wid)
  def _stop(self,w,user,reason):
@@ -149,12 +151,14 @@ class Broker:
   if w["state"]=="EXPIRED":
    self._run_cleanup(w); self.audit("stop",w["manifest"],"expired_resources_removed",user,"EXPIRED")
    return {"ok":True,"work_order_id":w["id"],"state":"EXPIRED"}
-  self.state.transition(w["id"],{w["state"]},"STOPPING"); self.audit("stop",w["manifest"],reason,user,"STOPPING")
+  if w["state"]!="STOPPING":self.state.transition(w["id"],{w["state"]},"STOPPING"); self.audit("stop",w["manifest"],reason,user,"STOPPING")
   published=True
   try:
    self._publish(w)
   except Reject:published=False
-  self._run_cleanup(w)
+  try:self._run_cleanup(w)
+  except Reject:
+   self.audit("cleanup_retry",w["manifest"],"runtime_resources_remain",user,"STOPPING");raise
   if not published:
    self.state.transition(w["id"],{"STOPPING"},"FAILED"); self.audit("failed",w["manifest"],"git_publish_failed",user,"FAILED"); raise Reject("git_publish_failed")
   self.state.transition(w["id"],{"STOPPING"},"STOPPED"); self.audit("stopped",w["manifest"],"resources_removed",user,"STOPPED"); return {"ok":True,"work_order_id":w["id"],"state":"STOPPED"}
@@ -169,6 +173,7 @@ class Broker:
    if not REF.fullmatch(branch):raise Reject("unsafe_git_ref")
    self.git_runner(["git","-C",str(checkout),"rev-parse","--verify",branch])
    self.git_runner(["git","-C",str(checkout),"push","origin",f"{branch}:{branch}"])
+  self._post('/v1/broker/pull-request',{"work_order_id":w["id"],"project":w["project"],"branch":w["manifest"]["repo"]["work_branch"]},None)
  def _verify(self,m,user):
   req={"schema","issuer","key_id","work_order_id","nonce","not_before","expires_at","subject","task","runtime","policy","signature","repo"}
   if not req<=set(m):raise Reject("unsigned_or_incomplete")
@@ -259,6 +264,7 @@ class Broker:
    top=scope.split('/',1)[0]
    if not PROJECT.fullmatch(top):raise Reject("unsafe_scope")
    d=self.safe_dir(work,top); self._chown_tree(d,uid,gid)
+  os.chown(work,uid,gid);os.chmod(work,0o550)
   self.quota_runner(work,self.state.quota_id(work),self._limits(m["runtime"]["limits"]).disk_mb)
   return work
  @staticmethod
@@ -269,18 +275,23 @@ class Broker:
    for name in dirs+files:
     p=Path(base)/name
     if not p.is_symlink():os.chown(p,uid,gid)
- def runtime_plan(self,m,work,token):
+ def runtime_plan(self,m,work,token,authorization=None):
   l=self._limits(m["runtime"]["limits"]); state=Path(os.environ.get("AGENTICDEV_BROKER_STATE","/var/lib/agenticdev-broker/runs")); state.mkdir(parents=True,exist_ok=True,mode=0o700); run=self.safe_dir(state,m["work_order_id"])
-  wo,tok=run/"work-order.json",run/"token"; wo.write_text(json.dumps(m,sort_keys=True,separators=(",",":"))); tok.write_text(token); os.chmod(wo,0o600);os.chmod(tok,0o600)
+  wo,tok=run/"work-order.json",run/"token"; wo.write_text(json.dumps(m,sort_keys=True,separators=(",",":"))); tok.write_text(token); os.chmod(wo,0o400);os.chmod(tok,0o400)
   account=self.account_lookup(m["subject"]["unix_user"]); uid,gid=account.pw_uid,account.pw_gid
+  os.chown(wo,uid,gid);os.chown(tok,uid,gid)
   identities=Path(os.environ.get("AGENTICDEV_IDENTITY_ROOT","/srv/agenticdev/identities")); identities.mkdir(parents=True,exist_ok=True,mode=0o700)
   identity=self.safe_dir(identities,m["subject"]["principal_id"]); pi=self.safe_dir(identity,"pi"); os.chown(pi,uid,gid)
-  wid=m["work_order_id"]; net="ad-"+wid; name="agenticdev-"+wid; egress="egress-"+wid; allow=','.join(m["policy"].get("egress_allowlist") or [])
+  wid=m["work_order_id"]; net="ad-"+wid; name="agenticdev-"+wid; egress="egress-"+wid
+  live=(authorization or {}).get("egress_allowlist")
+  if not isinstance(live,list) or not live:raise Reject("live_egress_policy_missing")
+  allow=','.join(live)
   pod=["docker","run","-d","--name",name,"--user",f"{uid}:{gid}","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--pids-limit",str(l.pids),"--cpus",l.cpus,"--memory",f"{l.memory_mb}m","--memory-swap",f"{l.memory_mb}m","--storage-opt",f"size={l.disk_mb}M","--network",net,"--env","HTTP_PROXY=http://egress:8888","--env","HTTPS_PROXY=http://egress:8888","--env","NO_PROXY=localhost,127.0.0.1","--env","PI_CODING_AGENT_DIR=/pi","--mount",f"type=bind,src={pi},dst=/pi","--tmpfs","/tmp:rw,noexec,nosuid,size=64m","--tmpfs",f"/run/agenticdev:rw,noexec,nosuid,size=8m,mode=0700,uid={uid},gid={gid}","--mount",f"type=bind,src={work},dst=/workspace,readonly","--entrypoint","sleep","agenticdev/pod:installed","infinity"]
   for scope in m["repo"].get("write_scope",[]):
    top=scope.split('/',1)[0]; pod[-3:-3]=["--mount",f"type=bind,src={work/top},dst=/workspace/{top}"]
   pod[-3:-3]=["--mount",f"type=bind,src={work/'.git'},dst=/workspace/.git","--mount",f"type=bind,src={work/'.agenticdev'},dst=/workspace/.agenticdev","--mount",f"type=bind,src={work/'.agenticdev-trees'},dst=/trees"]
-  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--network",net,"--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod,["docker","cp",str(wo),name+":/run/agenticdev/work-order.json"],["docker","cp",str(tok),name+":/run/agenticdev/token"],["docker","exec","--user","0",name,"chown",f"{uid}:{gid}","/run/agenticdev/work-order.json","/run/agenticdev/token"]]
+  pod[-3:-3]=["--mount",f"type=bind,src={wo},dst=/run/agenticdev/work-order.json,readonly","--mount",f"type=bind,src={tok},dst=/run/agenticdev/token,readonly"]
+  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--network",net,"--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
  def attach_stream(self,wid,token,user,conn):
   w=self._owned(wid,token,user); m=w["manifest"]
   if w["state"]!="RUNNING":raise Reject("workload_not_running")
@@ -303,8 +314,17 @@ class Broker:
    self.ptys.pop(wid,None); os.close(master); p.send_signal(signal.SIGHUP); self.audit("detach",m,"disconnected",user,"RUNNING")
  def _run_cleanup(self,w):
   wid=w["id"]
-  for c in (["docker","rm","-f",w["container"]],["docker","rm","-f","egress-"+wid],["docker","network","rm","ad-"+wid],["docker","network","rm","ad-"+wid+"-outside"]):subprocess.run(c,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  containers=(w["container"],"egress-"+wid);networks=("ad-"+wid,"ad-"+wid+"-outside")
+  for name in containers:subprocess.run(["docker","rm","-f",name],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  for name in networks:subprocess.run(["docker","network","rm",name],check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL)
+  checks=(["docker","inspect",name] for name in containers)
+  checks=(*checks,*(["docker","network","inspect",name] for name in networks))
+  if any(subprocess.run(c,check=False,stdout=subprocess.DEVNULL,stderr=subprocess.DEVNULL).returncode==0 for c in checks):raise Reject("cleanup_incomplete")
  def reap(self):
+  for wid in self.state.stopping():
+   try:
+    w=self.state.get(wid);self._run_cleanup(w);self.state.transition(wid,{"STOPPING"},"STOPPED");self.audit("stopped",w["manifest"],"cleanup_retry_succeeded",w["unix_user"],"STOPPED")
+   except Reject:pass
   reasons={wid:"deadline_reached" for wid in self.state.due(self.clock())}
   try:
    platform=self._post('/v1/broker/epoch',{},None)
@@ -314,15 +334,16 @@ class Broker:
   except Reject:pass  # outage blocks every new action; it does not destroy recoverable work
   for wid,reason in reasons.items():
    try:
-    w=self.state.get(wid); self.state.transition(wid,{w["state"]},"EXPIRED"); self._run_cleanup(w); self.audit("expired",w["manifest"],reason,w["unix_user"],"EXPIRED")
+    w=self.state.get(wid); self._run_cleanup(w); self.state.transition(wid,{w["state"]},"EXPIRED"); self.audit("expired",w["manifest"],reason,w["unix_user"],"EXPIRED")
    except Reject:pass
  @staticmethod
  def _run(plan):
   for c in plan:subprocess.run(c,check=True,stdin=subprocess.DEVNULL)
  @staticmethod
  def _git_run(cmd):
-  if len(cmd)>3 and cmd[:2]==["git","-C"]:
-   cmd=["git","-c",f"safe.directory={cmd[2]}",*cmd[1:]]
+  original=cmd;config=["-c","core.hooksPath=/dev/null"]
+  if len(original)>3 and original[:2]==["git","-C"]:config += ["-c",f"safe.directory={original[2]}"]
+  cmd=["git",*config,*original[1:]]
   env={"PATH":os.environ.get("PATH","/usr/bin:/bin"),"GIT_TERMINAL_PROMPT":"0",
        "GIT_SSH_COMMAND":"ssh -F /dev/null -i /srv/agenticdev/config/broker_git_key -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes -o UserKnownHostsFile=/srv/agenticdev/config/broker_known_hosts"}
   try:subprocess.run(cmd,check=True,stdin=subprocess.DEVNULL,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE,text=True,timeout=300,env=env)
@@ -335,10 +356,12 @@ class Broker:
    subprocess.run(["xfs_quota","-x","-c",f"limit -p bhard={disk_mb}m {project_id}",mount],check=True,timeout=30,stdout=subprocess.DEVNULL,stderr=subprocess.PIPE)
   except Exception as e:raise Reject("worktree_quota_unavailable") from e
 
-def recv_request(c):
+def recv_request(c,timeout=5):
+ c.settimeout(timeout)
  data=b''
  while b'\n' not in data:
-  chunk=c.recv(65536)
+  try:chunk=c.recv(65536)
+  except socket.timeout as e:raise Reject("request_timeout") from e
   if not chunk or len(data)+len(chunk)>1024*1024:raise Reject("invalid_request")
   data+=chunk
  return json.loads(data.split(b'\n',1)[0])
@@ -347,20 +370,24 @@ def serve(b,sock):
  def reaper():
   while True:b.reap();time.sleep(5)
  threading.Thread(target=reaper,daemon=True).start()
- with socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
+ capacity=threading.BoundedSemaphore(32)
+ with ThreadPoolExecutor(max_workers=16,thread_name_prefix="broker") as pool,socket.socket(socket.AF_UNIX,socket.SOCK_STREAM) as s:
   s.bind(str(sock));os.chmod(sock,0o660);s.listen(32)
   while True:
    c,_=s.accept()
+   if not capacity.acquire(blocking=False):c.close();continue
    def worker(conn):
-    with conn:
-     try:
-      uid=struct.unpack('3i',conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]; user=pwd.getpwuid(uid).pw_name; r=recv_request(conn)
-      if r.get("action")=="attach":
-       result=b.handle(r,user); conn.sendall((json.dumps(result)+'\n').encode())
-       if result.get("ok"):b.attach_stream(r["work_order_id"],r["device_token"],user,conn)
-      else:conn.sendall((json.dumps(b.handle(r,user))+'\n').encode())
-     except Exception:conn.sendall(b'{"ok":false,"reason":"invalid_request"}\n')
-   threading.Thread(target=worker,args=(c,),daemon=True).start()
+    try:
+     with conn:
+      try:
+       uid=struct.unpack('3i',conn.getsockopt(socket.SOL_SOCKET,socket.SO_PEERCRED,12))[1]; user=pwd.getpwuid(uid).pw_name; r=recv_request(conn)
+       if r.get("action")=="attach":
+        result=b.handle(r,user); conn.sendall((json.dumps(result)+'\n').encode())
+        if result.get("ok"):b.attach_stream(r["work_order_id"],r["device_token"],user,conn)
+       else:conn.sendall((json.dumps(b.handle(r,user))+'\n').encode())
+      except Exception:conn.sendall(b'{"ok":false,"reason":"invalid_request"}\n')
+    finally:capacity.release()
+   pool.submit(worker,c)
 def main():
  key=base64.b64decode(os.environ["WO_VERIFY_KEY_B64"]); b=Broker(key,os.environ["AGENTICDEV_INSTANCE_ID"],os.environ["CONTROL_PLANE_URL"],os.environ["BROKER_SECRET"],StateStore(Path('/var/lib/agenticdev-broker/state.sqlite3')),Path('/var/log/agenticdev-broker.jsonl'));serve(b,Path('/run/agenticdev/broker.sock'))
 if __name__=='__main__':main()

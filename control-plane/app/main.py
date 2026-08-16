@@ -7,9 +7,11 @@ Záměrně bez ORM: schéma je zdroj pravdy, ne Python třídy.
 from __future__ import annotations
 
 import base64, hashlib, json, os, secrets, uuid
+from urllib.parse import urlparse
 from datetime import datetime, timedelta, timezone
 
 import jwt
+import httpx
 import psycopg
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from fastapi import Depends, FastAPI, Header, HTTPException
@@ -24,6 +26,9 @@ DEF_MODEL   = os.environ.get("DEFAULT_MODEL", "gpt-5.5")
 LEASE_HOURS = int(os.environ.get("LEASE_HOURS", "4"))
 INSTANCE_ID = os.environ.get("AGENTICDEV_INSTANCE_ID", "")
 BROKER_SECRET = os.environ.get("BROKER_SECRET", "")
+CONTROL_PLANE_URL = os.environ.get("CONTROL_PLANE_URL", "http://control-plane:8080")
+FORGEJO_URL = os.environ.get("FORGEJO_URL", "http://forgejo:3000")
+FORGEJO_TOKEN = os.environ.get("FORGEJO_TOKEN", "")
 
 _SIGNING_KEY = Ed25519PrivateKey.from_private_bytes(
     base64.b64decode(os.environ["WO_SIGNING_KEY_B64"])
@@ -255,6 +260,7 @@ def next_work_order(project: str, ws: dict = Depends(current_ws)):
                 for r in ("architect", "implementer", "tester", "reviewer")
             ],
             "policy": {
+                "control_plane": CONTROL_PLANE_URL,
                 "model_allowlist": models,
                 "egress_allowlist": os.environ.get(
                     "EGRESS_ALLOWLIST",
@@ -265,7 +271,7 @@ def next_work_order(project: str, ws: dict = Depends(current_ws)):
                 "max_loop_iterations": {"implement_test": 5, "review_rework": 3},
                 "budget_tokens": 120_000,
             },
-            "telemetry": {"endpoint": "/v1/events"},
+            "telemetry": {"endpoint": CONTROL_PLANE_URL.rstrip("/") + "/v1/events"},
         }
 
         payload = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode()
@@ -305,7 +311,7 @@ def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: Non
             """SELECT wo.id AS work_order_id, wo.manifest_hash, wo.expires_at, wo.revoked_at,
                       a.state, a.lease_expires_at, w.id AS workstation_id, w.principal_id,
                       w.login AS unix_user, w.revoked_at AS ws_revoked, pr.active AS principal_active,
-                      p.code AS project, p.repo_url, t.id AS task_id, ph.kind AS phase, ps.issuing_enabled, ps.epoch,
+                      p.code AS project, p.repo_url, p.data_class, t.id AS task_id, ph.kind AS phase, ps.issuing_enabled, ps.epoch,
                       pm.active AS member_active
                  FROM work_order wo JOIN assignment a ON a.id=wo.assignment_id
                  JOIN workstation w ON w.id=a.workstation_id JOIN principal pr ON pr.id=w.principal_id
@@ -322,10 +328,37 @@ def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: Non
                 row["lease_expires_at"] <= now() or row["expires_at"] <= now() or
                 not row["issuing_enabled"] or int(row["epoch"]) != m.get("kill_epoch")):
             raise HTTPException(403, "assignment, membership, epoch or identity denied")
+        configured={x.strip() for x in os.environ.get("EGRESS_ALLOWLIST","").split(",") if x.strip()}
+        signed=set(m.get("policy",{}).get("egress_allowlist") or [])
+        mandatory={urlparse(CONTROL_PLANE_URL).hostname}
+        live=(signed & configured) | {x for x in mandatory if x}
+        if str(row["data_class"])=="restricted":live -= {"api.openai.com","api.anthropic.com","generativelanguage.googleapis.com"}
         return {"authorized": True, **{k: str(row[k]) for k in
                 ("principal_id", "workstation_id", "project", "task_id", "phase", "work_order_id")},
                 "unix_user": row["unix_user"], "kill_epoch": int(row["epoch"]),
-                "repo_url": row["repo_url"]}
+                "repo_url": row["repo_url"],"egress_allowlist":sorted(live)}
+
+class BrokerPullRequest(BaseModel):
+    work_order_id: str
+    project: str
+    branch: str
+
+@app.post("/v1/broker/pull-request")
+def broker_pull_request(body: BrokerPullRequest, _: None = Depends(_broker)):
+    if not FORGEJO_TOKEN:
+        raise HTTPException(503,"Forgejo broker credential unavailable")
+    with db() as c:
+        row=c.execute("""SELECT p.repo_url,t.title,wo.manifest FROM work_order wo JOIN assignment a ON a.id=wo.assignment_id
+          JOIN task t ON t.id=a.task_id JOIN phase ph ON ph.id=t.phase_id JOIN project p ON p.id=ph.project_id
+          WHERE wo.id=%s AND p.code=%s""",(body.work_order_id,body.project)).fetchone()
+    expected=(row["manifest"].get("repo") or {}).get("work_branch") if row else None
+    if not row or body.branch!=expected:raise HTTPException(403,"pull request identity denied")
+    path=urlparse(row["repo_url"]).path.removesuffix('.git').strip('/').split('/')
+    if len(path)!=2:raise HTTPException(503,"unsupported server repository identity")
+    response=httpx.post(f"{FORGEJO_URL}/api/v1/repos/{path[0]}/{path[1]}/pulls",
+      headers={"Authorization":f"token {FORGEJO_TOKEN}"},json={"head":body.branch,"base":"main","title":row["title"]},timeout=20)
+    if response.status_code not in (201,409):raise HTTPException(502,"Forgejo pull request creation failed")
+    return {"ok":True}
 
 
 @app.post("/v1/broker/audit")

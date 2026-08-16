@@ -113,6 +113,9 @@ STEPS: list[tuple[str, str]] = [
           PRIMARY KEY (project_id, principal_id)
         );
         ALTER TABLE platform_state ADD COLUMN IF NOT EXISTS epoch BIGINT NOT NULL DEFAULT 1
+        ;INSERT INTO project_member(project_id,principal_id)
+          SELECT p.id,pr.id FROM project p CROSS JOIN principal pr WHERE pr.active
+          ON CONFLICT (project_id,principal_id) DO NOTHING
         """,
     ),
 ]
