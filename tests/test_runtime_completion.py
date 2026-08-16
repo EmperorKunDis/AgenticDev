@@ -43,6 +43,9 @@ class RuntimeCompletion(unittest.TestCase):
  def test_access_grant_sends_psql_variables_over_stdin(self):
   s=(ROOT/'vps/agenticdev-ctl').read_text();block=s[s.index('  access)'):s.index('  gate)')]
   self.assertIn("printf '%s\\n'",block);self.assertNotIn('-v code="$CODE" -c',block)
+ def test_enrollment_worker_sends_psql_variables_over_stdin(self):
+  ctl=(ROOT/'vps/agenticdev-ctl').read_text();block=ctl[ctl.index('      sync)'):ctl.index('      add)')]
+  self.assertIn("\\\\set id '$eid'",block);self.assertNotIn('-v id="$eid"',block)
  def test_acceptance_never_converts_skip_to_pass(self):
   s=(ROOT/'tools/acceptance-runtime.sh').read_text()
   self.assertIn('PASS=',s);self.assertIn('FAIL=',s);self.assertIn('SKIP=',s);self.assertIn('if (( F != 0 )); then exit 1; fi',s)
@@ -85,6 +88,8 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('      sync)',ctl);self.assertIn("state='failed',error='login patří jinému klíči'",ctl)
   self.assertIn('read -r -s -p "  týmové heslo:',install);self.assertIn('ssh-keygen -q -t ed25519',install)
   self.assertIn('/join/status/$ENROLLMENT_ID',install)
+  self.assertIn('účet je ve frontě, čekám na bezpečné vytvoření',install)
+  self.assertIn('None if connect == "domain" else _mint_authkey(ip)',enroll)
  def test_enrollment_worker_is_installed_as_timer(self):
   install=(ROOT/'install-vps.sh').read_text();service=(ROOT/'vps/agenticdev-enrollment.service').read_text()
   self.assertIn('systemctl enable --now agenticdev-enrollment.timer',install)
