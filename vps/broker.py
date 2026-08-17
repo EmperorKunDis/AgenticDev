@@ -19,6 +19,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PublicKey
 
 ID=re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 PROJECT=re.compile(r"^[a-z0-9][a-z0-9-]{0,62}$")
+SCOPE_PART=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 REF=re.compile(r"^(?:task/[0-9a-f-]{8,64}/[a-z0-9._/-]+|agenticdev/[a-z0-9._/-]+)$")
 TEMPLATES={"agent-pod-v1"}
 STATES={"CREATED","STARTING","RUNNING","STOPPING","STOPPED","FAILED","EXPIRED"}
@@ -44,6 +45,14 @@ def canonical(m): return json.dumps({k:v for k,v in m.items() if k!="signature"}
 def parse_time(v):
  try:return datetime.fromisoformat(v.replace("Z","+00:00")).timestamp()
  except (TypeError,ValueError) as e:raise Reject("invalid_time") from e
+
+def scope_path(raw):
+ if not isinstance(raw,str) or not raw or raw.startswith('/') or len(raw)>512:raise Reject("unsafe_scope")
+ value=raw[:-3] if raw.endswith('/**') else raw
+ if not value or any(x in value for x in ('*','?','[',']')):raise Reject("unsafe_scope")
+ path=Path(value)
+ if any(part in ('..','.git','.agenticdev','.agenticdev-trees') or not SCOPE_PART.fullmatch(part) for part in path.parts):raise Reject("unsafe_scope")
+ return path
 
 @dataclass(frozen=True)
 class Limits: cpus:str; memory_mb:int; pids:int; wall_seconds:int; disk_mb:int
@@ -133,11 +142,17 @@ class Broker:
  def _start(self,r,user):
   m=r["work_order"]
   if not isinstance(r["device_token"],str):raise Reject("invalid_request")
-  self._verify(m,user); auth=self._post('/v1/broker/authorize',{"work_order":m},r["device_token"]); self._match(m,auth,user); self.state.consume(m["nonce"])
-  work=self.provision(m,auth,r["device_token"]); name="agenticdev-"+m["work_order_id"]; self.state.create(m,name,work,self.clock()); self.audit("created",m,"worktree_ready",user,"CREATED"); self.state.transition(m["work_order_id"],{"CREATED"},"STARTING"); self.audit("start",m,"provisioned",user,"STARTING")
-  try:self.runner(self.runtime_plan(m,work,r["device_token"],auth)); self.state.transition(m["work_order_id"],{"STARTING"},"RUNNING")
+  self._verify(m,user); auth=self._post('/v1/broker/authorize',{"work_order":m},r["device_token"]); self._match(m,auth,user)
+  try:
+   self.state.consume(m["nonce"])
+   work=self.provision(m,auth,r["device_token"]); name="agenticdev-"+m["work_order_id"]; self.state.create(m,name,work,self.clock()); self.audit("created",m,"worktree_ready",user,"CREATED"); self.state.transition(m["work_order_id"],{"CREATED"},"STARTING"); self.audit("start",m,"provisioned",user,"STARTING")
+   try:self.runner(self.runtime_plan(m,work,r["device_token"],auth)); self.state.transition(m["work_order_id"],{"STARTING"},"RUNNING")
+   except Exception as e:
+    self.state.transition(m["work_order_id"],{"STARTING"},"FAILED"); raise Reject("runtime_start_failed") from e
   except Exception as e:
-   self.state.transition(m["work_order_id"],{"STARTING"},"FAILED"); self.audit("failed",m,"runtime_start_failed",user,"FAILED"); raise Reject("runtime_start_failed") from e
+   reason=str(e) if isinstance(e,Reject) else "runtime_start_failed"
+   self.audit("start_failed",m,reason,user,"FAILED")
+   raise Reject(reason) from e
   self.audit("running",m,"started",user,"RUNNING"); return {"ok":True,"work_order_id":m["work_order_id"],"state":"RUNNING"}
  def _owned(self,wid,token,user,allow_expired=False):
   if not ID.fullmatch(str(wid)):raise Reject("invalid_workload_id")
@@ -278,9 +293,13 @@ class Broker:
   for executable in (work/'bin').glob('*') if (work/'bin').is_dir() else ():
    executable.chmod(0o555)
   for scope in m["repo"].get("write_scope",[]):
-   top=scope.split('/',1)[0]
-   if not PROJECT.fullmatch(top):raise Reject("unsafe_scope")
-   d=self.safe_dir(work,top); self._chown_tree(d,uid,gid)
+   rel=scope_path(scope); target=work/rel
+   if not target.exists():
+    if not (scope.endswith('/**') or (len(rel.parts)==1 and '.' not in rel.name)):raise Reject("scope_target_missing")
+    target=self.safe_dir(work,*rel.parts)
+   resolved=target.resolve()
+   if work.resolve() not in resolved.parents:raise Reject("symlink_escape")
+   self._chown_tree(target,uid,gid)
   os.chown(work,uid,gid);os.chmod(work,0o550)
   self.quota_runner(work,self.state.quota_id(work),self._limits(m["runtime"]["limits"]).disk_mb)
   return work
@@ -309,7 +328,7 @@ class Broker:
   cred_dst="/home/node/.claude" if provider=="claude" else "/home/node/.codex"
   pod=["docker","run","-d","--name",name,"--user",f"{uid}:{gid}","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--pids-limit",str(l.pids),"--cpus",l.cpus,"--memory",f"{l.memory_mb}m","--memory-swap",f"{l.memory_mb}m","--storage-opt",f"size={l.disk_mb}M","--network",net,"--env","HOME=/home/node","--env","HTTP_PROXY=http://egress:8888","--env","HTTPS_PROXY=http://egress:8888","--env","NO_PROXY=localhost,127.0.0.1","--mount",f"type=bind,src={credentials},dst={cred_dst}","--tmpfs","/tmp:rw,noexec,nosuid,size=64m","--tmpfs",f"/run/agenticdev:rw,noexec,nosuid,size=8m,mode=0700,uid={uid},gid={gid}","--mount",f"type=bind,src={work},dst=/workspace,readonly","--entrypoint","sleep","agenticdev/pod:installed","infinity"]
   for scope in m["repo"].get("write_scope",[]):
-   top=scope.split('/',1)[0]; pod[-4:-4]=["--mount",f"type=bind,src={work/top},dst=/workspace/{top}"]
+   rel=scope_path(scope); pod[-4:-4]=["--mount",f"type=bind,src={work/rel},dst=/workspace/{rel}"]
   pod[-4:-4]=["--mount",f"type=bind,src={work/'.git'},dst=/workspace/.git","--mount",f"type=bind,src={work/'.agenticdev'},dst=/workspace/.agenticdev","--mount",f"type=bind,src={work/'.agenticdev-trees'},dst=/trees"]
   pod[-4:-4]=["--mount",f"type=bind,src={wo},dst=/run/agenticdev/work-order.json,readonly","--mount",f"type=bind,src={tok},dst=/run/agenticdev/token,readonly"]
   if m["runtime"]["mode"]=="analysis":
