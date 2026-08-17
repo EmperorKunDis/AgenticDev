@@ -208,6 +208,35 @@ def _build_context_bundle(c, project: dict, task: dict) -> dict:
     return {"manifest_hash": f"sha256:{h}", **spec}
 
 
+def _release_failed_start(c, work_order_id: str) -> None:
+    """Revoke a Work Order whose runtime never started and make its task retryable."""
+    row = c.execute(
+        """UPDATE assignment SET state='released'
+             WHERE id=(SELECT assignment_id FROM work_order WHERE id=%s)
+               AND state='active'
+             RETURNING task_id""", (work_order_id,)).fetchone()
+    if not row:
+        return
+    c.execute("UPDATE work_order SET revoked_at=COALESCE(revoked_at,now()) WHERE id=%s",
+              (work_order_id,))
+    c.execute("UPDATE task SET state='ready' WHERE id=%s AND state='assigned'", (row["task_id"],))
+
+
+def _recover_reported_start_failures(c, project: str, principal_id: str) -> None:
+    """Repair leases left by broker start failures reported before this release."""
+    rows = c.execute(
+        """SELECT DISTINCT wo.id
+             FROM event e JOIN work_order wo ON wo.id::text=e.subject_id
+             JOIN assignment a ON a.id=wo.assignment_id
+             JOIN task t ON t.id=a.task_id JOIN phase ph ON ph.id=t.phase_id
+             JOIN project p ON p.id=ph.project_id
+            WHERE e.verb='broker_failed' AND e.payload->>'reason'='runtime_start_failed'
+              AND p.code=%s AND e.actor_id=%s AND a.state='active'""",
+        (project, principal_id)).fetchall()
+    for row in rows:
+        _release_failed_start(c, str(row["id"]))
+
+
 @app.get("/v1/work-orders/next")
 def next_work_order(project: str, provider: str, analysis: bool = False,
                     ws: dict = Depends(current_ws)):
@@ -231,6 +260,8 @@ def next_work_order(project: str, provider: str, analysis: bool = False,
             (project,)).fetchone()
         if not analysis and not approved:
             raise HTTPException(409, "ANALYSIS_REQUIRED")
+
+        _recover_reported_start_failures(c, project, str(ws["principal_id"]))
 
         # atomický výběr úkolu — SKIP LOCKED brání souběžnému přidělení
         task = c.execute(
@@ -426,6 +457,8 @@ def broker_audit(body: dict, _: None = Depends(_broker)):
                   (body.get("principal_id"), body.get("work_order_id") or "unknown",
                    "broker_" + str(body.get("verb", "reject")), json.dumps(body),
                    f"{body.get('verb')}:{body.get('reason')}:{body.get('ts')}"))
+        if body.get("verb") == "failed" and body.get("reason") == "runtime_start_failed":
+            _release_failed_start(c, str(body.get("work_order_id") or ""))
     return {"ok": True}
 
 
