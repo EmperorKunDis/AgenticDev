@@ -1,0 +1,17 @@
+[Unit]
+Description=AgenticDev one-shot enrollment worker
+After=agenticdev-broker.service docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/agenticdev-ctl user sync
+User=root
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+# The worker creates isolated Unix homes as its only privileged mutation.
+# A read-only ProtectHome setting takes precedence over ReadWritePaths on systemd
+# and makes useradd -m leave an orphan passwd entry without a home.
+ProtectHome=false
+ReadWritePaths=/etc /home /var /run /srv/agenticdev

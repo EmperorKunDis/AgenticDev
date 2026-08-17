@@ -11,7 +11,10 @@ chk_repo(){ if [[ -d .github ]]; then chk "$1" "$2"; else echo "  – $2 (není 
 echo "── VPS ──"
 for f in vps/docker-compose.yml vps/Caddyfile vps/sql/001_schema.sql \
          vps/sql/002_seed.sql vps/backup/restic-backup.sh install-vps.sh \
-         vps/mk-mac-installer.sh vps/agenticdev-ctl; do chk "$f" "$f"; done
+         vps/mk-mac-installer.sh vps/agenticdev-ctl vps/broker.py \
+         vps/broker-client.py vps/agenticdev-broker.service \
+         vps/agenticdev-enrollment.service vps/agenticdev-enrollment.timer \
+         vps/containerd-agenticdev.conf; do chk "$f" "$f"; done
 
 echo "── control plane ──"
 for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/app/main.py \
@@ -19,12 +22,12 @@ for f in control-plane/Dockerfile control-plane/requirements.txt control-plane/a
          control-plane/app/dashboard.html control-plane/app/enroll.py \
          control-plane/app/join.html control-plane/app/settings.py \
          control-plane/app/migrate.py control-plane/app/ratelimit.py \
-         control-plane/app/hooks.py; do chk "$f" "$f"; done
+         control-plane/app/hooks.py control-plane/app/repository.py control-plane/app/repo_scan.py; do chk "$f" "$f"; done
 
-echo "── workspace (Pi) ──"
+echo "── workspace (canonical + legacy compatibility) ──"
 chk workspace/_base/AGENTS.md               "AGENTS.md"
-chk workspace/_base/.pi/settings.json       "nastavení Pi"
-chk workspace/_base/.pi/extensions/agenticdev-git.ts "git extension"
+chk workspace/_base/.pi/settings.json       "legacy nastavení (runtime ho nenačítá)"
+chk workspace/_base/.pi/extensions/agenticdev-git.ts "legacy git extension"
 for s in git-flow kontext rozhodnuti; do
   chk "workspace/_base/.pi/skills/$s/SKILL.md" "skill $s"; done
 chk workspace/_base/.pi/prompts/hotovo.md   "/hotovo"
@@ -57,6 +60,9 @@ chk tools/rename-to-agenticdev.sh "přejmenování produktu"
 echo "── nasazení ──"
 chk install.sh              "bootstrap (jeden příkaz)"
 chk tools/preflight-vps.sh  "preflight"
+chk tools/runtime-host-check.sh "runtime host security gate"
+chk tools/acceptance-runtime.sh "runtime acceptance harness"
+chk tools/acceptance-prepare.py "signed acceptance fixtures"
 chk tools/smoke-vps.sh      "smoke test"
 
 echo "── web ──"
@@ -69,6 +75,10 @@ chk pod/compose.yaml          "compose"
 chk pod/Dockerfile            "obraz podu"
 chk pod/harness/harness.py    "harness"
 chk pod/harness/director.py   "director (postup úkolu)"
+chk pod/harness/providers.py  "nativní provider adaptéry"
+chk pod/harness/analysis_runner.py "read-only repository analysis"
+chk pod/harness/runtime_hooks.py "deterministické runtime hooky"
+chk pod/harness/runtime_probe.py "live sandbox probe"
 chk pod/egress/Dockerfile     "obraz egress"
 chk pod/egress/entrypoint.sh  "egress allowlist"
 

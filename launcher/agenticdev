@@ -6,23 +6,18 @@
 #  Tailscale SSH, pustí tohle, vybere projekt a pracuje. Na jeho stroji
 #  není potřeba Docker.
 #
-#  Dvojklik na ikonu → vyber projekt → Pi je nastavené.
+#  Dvojklik na ikonu → vyber projekt → zvol Claude Code nebo Codex.
 #  VPS pošle subagenty, hooky, oprávnění a kontext podle fáze.
 #
 #  Co je čí (ADR-0007):
 #    prostředí — skills, hooky, nastavení — posílá server do projektu
-#    ~/.pi/agent — přihlášení k modelu a sessions, na člověka
+#    ~/.claude nebo ~/.codex — osobní subscription session
 # ═══════════════════════════════════════════════════════════════
 set -euo pipefail
 
 CFG_DIR="${AGENTICDEV_HOME:-$HOME/.agenticdev}"
 CFG="$CFG_DIR/config"
 WORK_ROOT="${AGENTICDEV_WORK_ROOT:-$HOME/AgenticDev}"
-# Přihlášení k modelu a transkripty. Jeden adresář na člověka, protože
-# auth.json je jeden soubor a Pi si tokeny obnovuje sám — sdílený by si
-# dva lidé přepisovali navzájem.
-PI_DIR="${AGENTICDEV_PI_DIR:-$HOME/.pi/agent}"
-
 B='\033[1;36m'; G='\033[1;32m'; Y='\033[1;33m'; R='\033[1;31m'; D='\033[2m'; O='\033[0m'
 c()    { printf "${B}▸ %s${O}\n" "$*"; }
 ok()   { printf "${G}✓ %s${O}\n" "$*"; }
@@ -31,12 +26,25 @@ die()  { printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
 
 login() {
   . "$CFG" 2>/dev/null || die "Tenhle účet není připojený.\n   Správce ho založí na VPS:  agenticdev-ctl user add '$(id -un)'"
-  local r
-  r=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device" \
+  local challenge cid nonce signature r keyf="$CFG_DIR/device.key"
+  [[ -r "$keyf" ]] || die "Chybí soukromý device key; spusť onboarding znovu."
+  challenge=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device/challenge" \
         -H 'content-type: application/json' \
         -d "$(jq -nc --arg h "$HOSTNAME_" --arg f "$DEVICE_KEY_FP" \
               '{hostname:$h, device_key_fp:$f}')") \
     || die "Přihlášení selhalo. Jsi na tailnetu? Zkus: tailscale status"
+  cid=$(jq -r .challenge_id <<<"$challenge"); nonce=$(jq -r .nonce <<<"$challenge")
+  signature=$(python3 - "$keyf" "$nonce" <<'PY'
+import base64,sys
+from cryptography.hazmat.primitives import serialization
+key=serialization.load_ssh_private_key(open(sys.argv[1],'rb').read(),password=None)
+print(base64.b64encode(key.sign(sys.argv[2].encode())).decode())
+PY
+  ) || die "Device challenge se nepodařilo podepsat."
+  r=$(curl -fsS -X POST "$CONTROL_PLANE/v1/auth/device" \
+        -H 'content-type: application/json' \
+        -d "$(jq -nc --arg c "$cid" --arg s "$signature" '{challenge_id:$c,signature:$s}')") \
+    || die "Server odmítl proof-of-possession device klíče."
   echo "$r" | jq -r .token > "$CFG_DIR/token"
   chmod 600 "$CFG_DIR/token"
 }
@@ -101,6 +109,25 @@ cmd_work() {
     fi
   fi
 
+  printf "\n  ${B}Který osobní subscription účet použít?${O}\n\n"
+  printf "  1) Claude Code\n  2) Codex\n\n"
+  local provider_pick provider
+  read -rp "  číslo (Enter = 1): " provider_pick </dev/tty
+  case "${provider_pick:-1}" in 1) provider=claude ;; 2) provider=codex ;; *) die "Neplatný provider." ;; esac
+  if [[ "$provider" == claude ]]; then
+    command -v claude >/dev/null || die "Claude Code CLI na VPS chybí."
+    claude auth status >/dev/null 2>&1 || claude
+    claude auth status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Claude není platné."
+  else
+    command -v codex >/dev/null || die "Codex CLI na VPS chybí."
+    codex login status >/dev/null 2>&1 || codex login
+    codex login status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Codex není platné."
+  fi
+  curl -fsS -X POST "$CONTROL_PLANE/v1/provider-profile" \
+    -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+    -d "$(jq -nc --arg p "$provider" '{provider:$p,auth_status:"ready"}')" >/dev/null \
+    || die "Stav provider loginu se nepodařilo zapsat."
+
   echo; c "Stahuji nastavení pro $code"
   local b
   b=$(curl -fsS "$CONTROL_PLANE/v1/workspace/$code/bundle${override:+?phase=$override}" \
@@ -113,6 +140,64 @@ cmd_work() {
   dclass=$(echo "$b" | jq -r .project.data_class)
   tasks=$(echo "$b"  | jq -r .ready_tasks)
   ws="$WORK_ROOT/$code"
+
+  local analysis_status
+  analysis_status=$(echo "$b" | jq -r '.project.analysis_status // "awaiting_provider"')
+  if [[ "$analysis_status" != ready ]]; then
+    command -v agenticdev-broker-client >/dev/null \
+      || die "Chybí klient privilegovaného brokeru; kontaktuj správce."
+    c "Spouštím read-only analýzu repozitáře ($analysis_status)"
+    curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/retry" \
+      -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+      -d "$(jq -nc --arg p "$provider" '{provider:$p}')" >/dev/null \
+      || die "Analýzu se nepodařilo zařadit."
+    local awo aid astarted
+    awo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next?project=$code&provider=$provider&analysis=true" \
+      -H "Authorization: Bearer $t") || die "Server nevydal podepsaný analysis Work Order."
+    jq -e '.work_order.signature and (.work_order.runtime.mode == "analysis")' >/dev/null <<<"$awo" \
+      || die "Neplatný analysis Work Order."
+    astarted=$(AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client start \
+      <<<"$(jq -c '.work_order' <<<"$awo")") || die "Broker analýzu odmítl."
+    aid=$(jq -r .work_order_id <<<"$astarted")
+    AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client attach "$aid" \
+      || die "Analýza byla přerušena."
+    AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client stop "$aid" >/dev/null || true
+    analysis_status=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" \
+      -H "Authorization: Bearer $t" | jq -r .state)
+    local analysis_json answers='{}' count question answer
+    analysis_json=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" -H "Authorization: Bearer $t")
+    if [[ "$analysis_status" == questions ]]; then
+      count=$(jq '.questions|length' <<<"$analysis_json")
+      for ((i=0;i<count;i++)); do
+        question=$(jq -r ".questions[$i].question // .questions[$i]" <<<"$analysis_json")
+        printf "\n  ${B}%s${O}\n" "$question"
+        read -r -p "  odpověď: " answer </dev/tty
+        answers=$(jq -c --arg k "$i" --arg v "$answer" '. + {($k):$v}' <<<"$answers")
+      done
+      curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/answers" \
+        -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+        -d "$(jq -nc --argjson a "$answers" '{answers:$a}')" >/dev/null \
+        || die "Odpovědi se nepodařilo uložit."
+      analysis_json=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" -H "Authorization: Bearer $t")
+    fi
+    local review_file
+    review_file=$(mktemp); jq '.result' <<<"$analysis_json" >"$review_file"
+    printf "\n  Otevírám výsledek analýzy k lidské revizi. Ulož a zavři editor.\n"
+    "${EDITOR:-nano}" "$review_file" </dev/tty >/dev/tty
+    jq -e 'type=="object"' "$review_file" >/dev/null || die "Výsledek musí zůstat JSON objekt."
+    curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/revise" \
+      -H "Authorization: Bearer $t" -H 'content-type: application/json' \
+      -d "$(jq -nc --slurpfile r "$review_file" '{result:$r[0],questions:[]}')" >/dev/null \
+      || die "Upravená analýza neprošla schema/citation validací."
+    rm -f "$review_file"
+    read -r -p "  Schválit analýzu a odemknout mutující úkoly? [y/N] " answer </dev/tty
+    [[ "$answer" =~ ^[yYaA]$ ]] || { warn "Analýza zůstává v review; úkoly jsou zamčené."; return 0; }
+    curl -fsS -X POST "$CONTROL_PLANE/v1/projects/$code/analysis/approve" \
+      -H "Authorization: Bearer $t" >/dev/null || die "Schválení selhalo."
+    ok "analýza schválena; mutující Work Ordery jsou odemčené"
+    b=$(curl -fsS "$CONTROL_PLANE/v1/workspace/$code/bundle${override:+?phase=$override}" \
+      -H "Authorization: Bearer $t") || die "Schválený bundle nelze načíst."
+  fi
 
   mkdir -p "$WORK_ROOT"
   if [[ -d "$ws/.git" ]]; then
@@ -150,147 +235,34 @@ DEC
   chmod +x "$ws/.agenticdev/bin/agenticdev-decision"
   grep -q '^\.agenticdev/$' "$ws/.gitignore" 2>/dev/null || echo '.agenticdev/' >> "$ws/.gitignore"
 
-  # ── Sandbox ────────────────────────────────────────────────────
-  if ! command -v docker >/dev/null; then
-    die "Na tomhle stroji není Docker. Pod se spouští na VPS — přihlas se tam:
-   tailscale ssh $(id -un)@<vps>"
-  fi
-  if ! docker info >/dev/null 2>&1; then
-    die "Na Docker nedosáhnu. Bez izolace agenta nespustím.
-   Nejčastěji chybí členství ve skupině docker:
-   správce spustí  usermod -aG docker $(id -un)  a ty se přihlásíš znovu."
-  fi
+  # ── Privilegovaný broker ──────────────────────────────────────
+  # Klient neposílá Compose, image, command, environment, mount ani host path.
+  # Jediným autoritativním vstupem je přesně podepsaný Work Order; všechny
+  # runtime detaily skládá root-owned broker z immutable šablony.
+  local wo wo_id
+  wo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next?project=$code&provider=$provider" \
+       -H "Authorization: Bearer $t") \
+    || die "Server nevydal Work Order. Bez ověřitelné autorizace pod nespustím."
+  jq -e '.work_order.signature and .work_order.nonce' >/dev/null <<<"$wo" \
+    || die "Server nevydal podepsaný Work Order. Interaktivní fallback je zakázán."
+  wo_id=$(jq -r '.work_order.work_order_id' <<<"$wo")
+  c "Work Order $(cut -c1-8 <<<"$wo_id") — $(jq -r '.work_order.task.title' <<<"$wo")"
 
-  local pod_dir="$CFG_DIR/pod"
-  if [[ ! -f "$pod_dir/compose.yaml" ]]; then
-    c "Stahuji definici podu"
-    mkdir -p "$pod_dir/egress" "$pod_dir/harness"
-    for f in compose.yaml Dockerfile egress/Dockerfile egress/entrypoint.sh \
-             harness/harness.py harness/director.py; do
-      curl -fsSL "$CONTROL_PLANE/pod/$f" -o "$pod_dir/$f" \
-        || die "Nepodařilo se stáhnout pod/$f z VPS."
-    done
-  fi
+  command -v agenticdev-broker-client >/dev/null \
+    || die "Chybí klient privilegovaného brokeru; kontaktuj správce."
+  c "Startuji pod přes privilegovaný broker"
+  local started
+  started=$(AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client start \
+    <<<"$(jq -c '.work_order' <<<"$wo")") \
+    || die "Broker workload odmítl."
+  wo_id=$(jq -r '.work_order_id' <<<"$started")
+  AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client attach "$wo_id" \
+    || die "Attach selhal nebo byl workload revokován."
+  AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client stop "$wo_id" >/dev/null \
+    || warn "Broker workload bezpečně neukončil; kontaktuj správce."
 
-  # Kontext a tajemství mimo repozitář — do gitu se nesmí dostat.
-  local ctx="$CFG_DIR/ctx/$code"
-  mkdir -p "$ctx"; chmod 700 "$CFG_DIR/ctx"
-
-  # Worktree rozdělaných úkolů. Leží u ostatních projektů na hostiteli,
-  # ne v podu — jinak by se s ním smazaly.
-  local trees="$WORK_ROOT/.agenticdev-trees"
-  mkdir -p "$trees"
-
-  # Scope na zapisovatelné mounty. Repozitář jde dovnitř read-only,
-  # tyhle cesty se přes něj přemountují rw. Co není tady, je pro agenta
-  # jen ke čtení — a vynucuje to jádro.
-  local ovr="$pod_dir/compose.override.yaml"
-  {
-    echo "services:"
-    echo "  pod:"
-    echo "    volumes:"
-    echo "      - $ws/.git:/workspace/.git:rw"
-    echo "      - $ws/.agenticdev:/workspace/.agenticdev:rw"
-    echo "$b" | jq -r '.scope[]?' | while read -r sc; do
-      [[ -n "$sc" ]] || continue
-      local top="${sc%%/*}"
-      [[ -n "$top" && "$top" != "." ]] || continue
-      mkdir -p "$ws/$top"
-      echo "      - $ws/$top:/workspace/$top:rw"
-    done
-  } > "$ovr"
-
-  # Policy pro harness. Egress vždy obsahuje control plane — bez něj by
-  # pod nemohl zapisovat rozhodnutí.
-  local cp_host; cp_host=$(sed -E 's|^https?://||; s|[:/].*$||' <<<"$CONTROL_PLANE")
-  local allow; allow=$(echo "$b" | jq -r '.egress_allowlist // [] | join(",")')
-  [[ -n "$allow" ]] && allow="$cp_host,$allow" || allow="$cp_host"
-
-  # Work order. Bez něj do podu nedorazí limity opakování ani human gate,
-  # takže by director neměl co vynucovat (ADR-0003). Když žádný úkol není
-  # ready, pracuje se interaktivně jako dřív.
-  local wo wo_id="" wo_policy="null" wo_task="null"
-  wo=$(curl -fsS "$CONTROL_PLANE/v1/work-orders/next" -H "Authorization: Bearer $t" 2>/dev/null || true)
-  if [[ -n "$wo" ]] && ! jq -e '.work_order == null' >/dev/null 2>&1 <<<"$wo"; then
-    wo_id=$(jq -r '.work_order.work_order_id // ""' <<<"$wo")
-    wo_policy=$(jq -c '.work_order.policy // null' <<<"$wo")
-    wo_task=$(jq -c '.work_order.task // null' <<<"$wo")
-    c "Work order $(cut -c1-8 <<<"$wo_id") — $(jq -r '.work_order.task.title // "?"' <<<"$wo")"
-  else
-    warn "žádný úkol ve stavu ready — otevřu interaktivní session"
-  fi
-
-  local lease_h; lease_h=$(echo "$b" | jq -r '.lease_hours // 4')
-  # `model` tu není: vybírá si ho člověk v Pi a umí ho přepnout za běhu,
-  # takže by policy nesla údaj, který za chvíli neplatí. Hranicí je egress
-  # (ADR-0004).
-  echo "$b" | jq \
-      --arg cp "$CONTROL_PLANE" --arg br "$branch" --arg wo "$wo_id" \
-      --argjson wop "$wo_policy" --argjson wot "$wo_task" \
-      --argjson dl "$(( $(date +%s) + lease_h * 3600 ))" \
-      '{project: .project.code, client: .project.client, phase: .project.phase,
-        data_class: .project.data_class, model_allowlist: .project.model_allowlist,
-        scope: .scope,
-        egress: (.egress_allowlist // []), budget_tokens: (.budget_tokens // null),
-        control_plane: $cp, branch: $br, deadline_ts: $dl,
-        work_order_id: (if $wo == "" then null else $wo end),
-        task: $wot,
-        max_loop_iterations: ($wop.max_loop_iterations // null),
-        human_gate: ($wop.human_gate // [])}' > "$ctx/policy.json"
-
-  # Přihlášení k modelu a sessions toho člověka. Adresář musí existovat
-  # dřív, než ho Docker připojí — jinak ho vyrobí jako root a Pi si do něj
-  # nezapíše.
-  mkdir -p "$PI_DIR"; chmod 700 "$PI_DIR"
-
-  local a_name a_email
-  a_name=$(echo "$b"  | jq -r '.author.name  // "AgenticDev agent"')
-  a_email=$(echo "$b" | jq -r '.author.email // "agent@agenticdev.local"')
-
-  cat > "$pod_dir/.env" <<ENVF
-AGENTICDEV_PROJECT=$code
-AGENTICDEV_REPO_DIR=$ws
-AGENTICDEV_CTX_DIR=$ctx
-AGENTICDEV_TREES_DIR=$trees
-AGENTICDEV_PI_DIR=$PI_DIR
-AGENTICDEV_EGRESS_ALLOW=$allow
-AGENTICDEV_AUTHOR_NAME=$a_name
-AGENTICDEV_AUTHOR_EMAIL=$a_email
-AGENTICDEV_UID=$(id -u)
-AGENTICDEV_GID=$(id -g)
-ENVF
-  chmod 600 "$pod_dir/.env"
-
-  clear
-  printf "\n  ${G}▍${O} ${B}%s${O}  ${D}%s${O}\n" "$code" "$client"
-  printf "  ${D}%s${O}\n" "──────────────────────────────────────────"
-  printf "  fáze          ${B}%s${O}\n" "$phase"
-  printf "  data          %s\n" "$dclass"
-  printf "  smíš měnit    %s\n" "$(echo "$b" | jq -r '.scope | join(", ")')"
-  printf "  úkoly         %s ready ${D}(.agenticdev/tasks.md)${O}\n" "$tasks"
-  printf "  větev         %s\n" "$branch"
-  printf "  ${D}──────────────────────────────────────────${O}\n\n"
-
-  c "Startuji pod"
-  ( cd "$pod_dir" && docker compose up -d --build egress >/dev/null 2>&1 ) \
-    || die "Egress proxy nenaběhla. Pod bez ní nespustím."
-  ok "egress"
-
-  # Token a policy až teď, na tmpfs uvnitř podu — na disk hostitele se
-  # nedostanou.
-  ( cd "$pod_dir" && docker compose up -d --no-deps pod >/dev/null 2>&1 ) \
-    || die "Pod nenaběhl."
-  local cid; cid=$( cd "$pod_dir" && docker compose ps -q pod )
-  docker cp "$ctx/policy.json" "$cid:/run/agenticdev/policy.json" >/dev/null
-  docker cp "$CFG_DIR/token"   "$cid:/run/agenticdev/token"       >/dev/null 2>&1 || true
-
-  docker exec -it "$cid" python3 /opt/agenticdev/harness.py || true
-
-  # ── Úklid ──────────────────────────────────────────────────────
-  c "Uklízím"
-  ( cd "$pod_dir" && docker compose down -v --remove-orphans >/dev/null 2>&1 ) || true
-  rm -f "$ctx/policy.json"
-  ok "pod zrušen"
+  # Broker vlastní lifecycle, teardown i audit. Klient nemá container ID ani
+  # oprávnění volat runtime přímo.
 
   if [[ -n "$(git -C "$ws" status --porcelain 2>/dev/null)" ]]; then
     warn "Ve workspace zůstaly nezacommitované změny."
@@ -371,18 +343,8 @@ cmd_doctor() {
   for t in git jq curl; do
     command -v $t >/dev/null && ok "$t" || { warn "chybí: $t"; bad=1; }
   done
-  # Pi běží v podu, ne tady. Na VPS ho tedy nehledáme — hledáme Docker,
-  # kterým se pod spouští.
-  if command -v docker >/dev/null && docker info >/dev/null 2>&1; then
-    ok "docker"
-  else
-    warn "na Docker nedosáhnu — správce: usermod -aG docker $(id -un)"; bad=1
-  fi
-  if [[ -f "$PI_DIR/auth.json" ]]; then
-    ok "přihlášení k modelu ($PI_DIR)"
-  else
-    warn "nejsi přihlášený k modelu — v Pi použij /login (stačí jednou)"
-  fi
+  command -v agenticdev-broker-client >/dev/null && ok "privilegovaný broker" || { warn "broker klient chybí"; bad=1; }
+  ok "Claude/Codex přihlášení je oddělené per Unix UID"
   command -v tailscale >/dev/null && ok "tailscale" || warn "tailscale"
   if [[ -f "$CFG" ]]; then
     ok "konfigurace"

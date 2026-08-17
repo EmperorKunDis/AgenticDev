@@ -167,6 +167,6 @@ cat <<EOF
       ${Y}$(if [[ "$CONNECT" == "domain" ]]; then echo "ssh $LOGIN@$VPS_HOST"; else echo "tailscale ssh $LOGIN@$VPS_HOST"; fi)${O}
       ${Y}agenticdev${O}
 
-  ${D}Poprvé se v Pi přihlas k modelu přes /login. Pak už to platí.${O}
+  ${D}Při první práci vyber Claude nebo Codex a dokonči jeho nativní subscription login.${O}
 
 EOF

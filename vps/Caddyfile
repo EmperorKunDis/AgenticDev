@@ -29,6 +29,11 @@
 	# Caddy místo klientovy, limit by po pěti pokusech zamkl celý svět.
 
 	# Control plane API — pro stanice a pody na tailnetu
+	handle /health {
+		rewrite * /v1/health
+		reverse_proxy control-plane:8080
+	}
+
 	handle /v1/* {
 		reverse_proxy control-plane:8080
 	}
@@ -41,6 +46,15 @@
 	# Forgejo — git, PR, Actions, webhooky
 	handle /git/* {
 		uri strip_prefix /git
+		reverse_proxy forgejo:3000
+	}
+
+	# Forgejo Actions checkout currently drops the instance subpath when a
+	# runner is registered against https://host/git/. Permit only Git's smart
+	# HTTP transport at the unprefixed URL used by isolated job containers;
+	# the repository remains private and Forgejo still requires credentials.
+	@runner_git path_regexp runner_git ^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack)$
+	handle @runner_git {
 		reverse_proxy forgejo:3000
 	}
 

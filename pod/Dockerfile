@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         git ca-certificates python3 python3-venv jq less \
     && rm -rf /var/lib/apt/lists/*
 
-RUN npm install -g @earendil-works/pi-coding-agent \
+RUN npm install -g @anthropic-ai/claude-code @openai/codex \
     && npm cache clean --force
 
 # Nezakládáme nového uživatele — obraz node už má uid/gid 1000 (node).
@@ -21,8 +21,8 @@ RUN npm install -g @earendil-works/pi-coding-agent \
 RUN mkdir -p /run/agenticdev /ctx /workspace \
     && chown -R node:node /run/agenticdev
 
-COPY harness/harness.py harness/director.py /opt/agenticdev/
-RUN chmod 0555 /opt/agenticdev/harness.py /opt/agenticdev/director.py
+COPY harness/harness.py harness/director.py harness/providers.py harness/analysis_runner.py harness/runtime_hooks.py harness/runtime_probe.py /opt/agenticdev/
+RUN chmod 0555 /opt/agenticdev/harness.py /opt/agenticdev/director.py /opt/agenticdev/providers.py /opt/agenticdev/analysis_runner.py /opt/agenticdev/runtime_hooks.py /opt/agenticdev/runtime_probe.py
 
 USER node
 WORKDIR /workspace

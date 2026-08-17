@@ -12,7 +12,7 @@ import jwt
 from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
 
-from .main import DEF_MODEL, JWT_SECRET, _emit, db, now
+from .main import JWT_SECRET, _emit, db, now
 from . import ratelimit
 from . import settings as cfg
 
@@ -131,6 +131,7 @@ class Register(BaseModel):
     join_token: str
     hostname: str
     device_key_fp: str
+    device_public_key: str | None = None
     display_name: str
     email: str | None = None
     ssh_public_key: str | None = None      # bez něj nefunguje git clone
@@ -171,32 +172,35 @@ def register_ws(b: Register):
             ws = c.execute(
                 """UPDATE workstation
                       SET device_key_fp = %s, revoked_at = NULL,
+                          device_public_key = COALESCE(%s, device_public_key),
                           ssh_public_key = COALESCE(%s, ssh_public_key),
                           login = COALESCE(%s, login),
                           key_installed_at = CASE
-                            WHEN %s IS NOT NULL AND %s <> COALESCE(ssh_public_key, '')
+                            WHEN %s::text IS NOT NULL AND %s::text <> COALESCE(ssh_public_key, '')
                             THEN NULL ELSE key_installed_at END
                     WHERE id = %s
                   RETURNING *""",
-                (b.device_key_fp, b.ssh_public_key, b.login,
+                (b.device_key_fp, b.device_public_key, b.ssh_public_key, b.login,
                  b.ssh_public_key, b.ssh_public_key, prev["id"])).fetchone()
         else:
             ws = c.execute(
                 """INSERT INTO workstation (principal_id, hostname, device_key_fp,
-                                            channel, ssh_public_key, login)
-                   VALUES (%s, %s, %s, 'stable', %s, %s)
+                                            device_public_key, channel, ssh_public_key, login)
+                   VALUES (%s, %s, %s, %s, 'stable', %s, %s)
                    ON CONFLICT (device_key_fp) DO UPDATE
                      SET hostname = EXCLUDED.hostname, revoked_at = NULL,
+                         device_public_key = COALESCE(EXCLUDED.device_public_key,
+                                                      workstation.device_public_key),
                          ssh_public_key = COALESCE(EXCLUDED.ssh_public_key,
                                                    workstation.ssh_public_key),
                          login = COALESCE(EXCLUDED.login, workstation.login)
                    RETURNING *""",
-                (p["id"], b.hostname, b.device_key_fp,
+                (p["id"], b.hostname, b.device_key_fp, b.device_public_key,
                  b.ssh_public_key, b.login)).fetchone()
         _emit(c, p["id"], "workstation", str(ws["id"]), "registered",
               {"hostname": b.hostname}, b.device_key_fp)
 
-    git_ok = _forgejo_add_key(b.display_name, b.email, b.hostname, b.ssh_public_key)
+    git_ok = _forgejo_add_key(b.login, b.email, b.hostname, b.ssh_public_key)
 
     return {"workstation_id": ws["id"], "channel": ws["channel"],
             "git_ready": git_ok,
@@ -248,7 +252,7 @@ def ssh_key_installed(ws_id: str, b: KeyDone, op: dict = Depends(operator)):
     return {"ok": True, "login": row["login"]}
 
 
-def _forgejo_add_key(display_name: str, email: str | None,
+def _forgejo_add_key(unix_login: str | None, email: str | None,
                      hostname: str, pubkey: str | None) -> bool:
     """
     Bez klíče ve Forgeju nefunguje `git clone`. Zakládá i uživatele,
@@ -256,15 +260,30 @@ def _forgejo_add_key(display_name: str, email: str | None,
     """
     if not (pubkey and FORGEJO_TOKEN):
         return False
-    login = re.sub(r"[^a-z0-9]+", "", display_name.lower().replace(" ", "."))[:38] or "dev"
+    # Unix login je stabilní identita používaná launcherem i work orderem.
+    # Neodvozuj Forgejo účet ze zobrazovaného jména (mezery/diakritika a
+    # přejmenování by vytvořily jiného uživatele).
+    login = re.sub(r"[^a-z0-9_-]+", "", (unix_login or "").lower())[:38] or "dev"
     h = {"Authorization": f"token {FORGEJO_TOKEN}", "content-type": "application/json"}
     try:
         r = httpx.get(f"{FORGEJO_URL}/api/v1/users/{login}", headers=h, timeout=15)
         if r.status_code == 404:
-            httpx.post(f"{FORGEJO_URL}/api/v1/admin/users", headers=h, timeout=20,
-                       json={"username": login, "email": email or f"{login}@agenticdev.local",
-                             "password": secrets.token_urlsafe(24),
-                             "must_change_password": False})
+            create = {"username": login,
+                      "email": email or f"{login}@agenticdev.local",
+                      "password": secrets.token_urlsafe(24),
+                      "must_change_password": False}
+            r = httpx.post(f"{FORGEJO_URL}/api/v1/admin/users", headers=h,
+                           timeout=20, json=create)
+            # Forgejo vyžaduje unikátní e-mail. Jeden člověk může být zároveň
+            # admin i pracovní účet, proto při kolizi použij lokální alias.
+            if r.status_code == 422 and email:
+                create["email"] = f"{login}@agenticdev.local"
+                r = httpx.post(f"{FORGEJO_URL}/api/v1/admin/users", headers=h,
+                               timeout=20, json=create)
+            if r.status_code != 201:
+                return False
+        elif r.status_code != 200:
+            return False
         r = httpx.post(f"{FORGEJO_URL}/api/v1/admin/users/{login}/keys", headers=h, timeout=20,
                        json={"title": f"agenticdev-{hostname}", "key": pubkey.strip()})
         return r.status_code in (201, 422)          # 422 = klíč už tam je
@@ -293,9 +312,8 @@ PRD_FILES = {
 }
 
 # Brána před mergem (ADR-0006). Pouští to runner na VPS, ne agent ve svém
-# podu — o to celé jde. Dokud v repozitáři není co spustit, projde to, ale
-# v logu musí být poznat rozdíl mezi „testy nejsou" a „testy padají",
-# jinak se z prvního stavu stane trvalý.
+# podu — o to celé jde. Repozitář bez rozpoznaných testů musí selhat:
+# zelená brána, která nic nespustila, vytváří falešný bezpečnostní signál.
 TEST_WORKFLOW = """name: test
 
 on:
@@ -323,8 +341,20 @@ jobs:
       - name: Testy nejsou
         if: steps.detect.outputs.kind == 'none'
         run: |
-          echo "::warning::V repozitáři nejsou žádné testy. Brána projde, ale nic neověřila."
-          echo "Až přidáš testy, začne jejich selhání merge blokovat."
+          echo "::error::V repozitáři nejsou žádné rozpoznané testy."
+          echo "Přidej testovací příkaz podporovaný detekcí; prázdná brána nesmí povolit merge."
+          exit 1
+
+      - name: Připrav nástroje
+        if: steps.detect.outputs.kind != 'none' && steps.detect.outputs.kind != 'node'
+        run: |
+          set -e
+          apt-get update -qq
+          case "${{ steps.detect.outputs.kind }}" in
+            python) apt-get install -y -qq python3 python3-pip python3-pytest ;;
+            make)   apt-get install -y -qq make ;;
+            go)     apt-get install -y -qq golang-go ;;
+          esac
 
       - name: Testy
         if: steps.detect.outputs.kind != 'none'
@@ -332,7 +362,7 @@ jobs:
           set -e
           case "${{ steps.detect.outputs.kind }}" in
             node)   npm ci --no-audit --no-fund || npm install --no-audit --no-fund; npm test ;;
-            python) python -m pip install -q -e . 2>/dev/null || true; python -m pytest -q ;;
+            python) python3 -m pip install -q --break-system-packages -e . 2>/dev/null || true; python3 -m pytest -q ;;
             make)   make test ;;
             go)     go test ./... ;;
           esac
@@ -377,12 +407,16 @@ def _forgejo_migrate(code: str, url: str) -> str | None:
 def _forgejo_put(owner: str, code: str, path: str, content: str, message: str) -> bool:
     import base64 as b64
     try:
-        r = httpx.post(
-            f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/{path}",
-            headers={"Authorization": f"token {FORGEJO_TOKEN}"},
-            json={"content": b64.b64encode(content.encode()).decode(),
-                  "message": message, "branch": "main"},
-            timeout=30)
+        url = f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/{path}"
+        headers = {"Authorization": f"token {FORGEJO_TOKEN}"}
+        existing = httpx.get(url, headers=headers, params={"ref": "main"}, timeout=30)
+        payload = {"content": b64.b64encode(content.encode()).decode(),
+                   "message": message, "branch": "main"}
+        if existing.status_code == 200:
+            payload["sha"] = existing.json()["sha"]
+            r = httpx.put(url, headers=headers, json=payload, timeout=30)
+        else:
+            r = httpx.post(url, headers=headers, json=payload, timeout=30)
         return r.status_code in (200, 201)
     except Exception:
         return False
@@ -446,10 +480,7 @@ def _forgejo_protect_main(owner: str, code: str) -> bool:
                   "enable_status_check": True,
                   "status_check_contexts": _gate_contexts(),
                   "block_on_outdated_branch": False,
-                  # Kolik lidí musí PR odkliknout. Nula znamená, že kód
-                  # projde, aniž by ho někdo přečetl — u týmu, kde autoři
-                  # nejsou programátoři, je to ta podstatná pojistka.
-                  "required_approvals": cfg.get_int("MERGE_GATE_APPROVALS", 0)},
+                  "required_approvals": max(1, cfg.get_int("MERGE_GATE_APPROVALS", 1))},
             timeout=30)
         return r.status_code in (200, 201, 409)
     except Exception:
@@ -472,7 +503,7 @@ def _forgejo_add_hook(owner: str, code: str) -> bool:
             f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/hooks",
             headers={"Authorization": f"token {FORGEJO_TOKEN}"},
             json={"type": "forgejo", "active": True,
-                  "events": ["pull_request"],
+                  "events": ["pull_request", "push"],
                   "config": {"url": f"{cp}/v1/hooks/forgejo",
                              "content_type": "json", "secret": secret}},
             timeout=30)
@@ -512,13 +543,17 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
         if exists:
             raise HTTPException(409, f"projekt '{code}' už existuje")
 
-        models = [os.environ.get("LOCAL_MODEL", "local/qwen2.5-coder:32b")] \
-                 if p.data_class == "restricted" else [DEF_MODEL]
+        models = None
         proj = c.execute(
             """INSERT INTO project (client_id, code, repo_url, data_class,
                                     model_allowlist, budget_czk_month)
                VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
             (client["id"], code, repo, p.data_class, models, p.budget_czk_month)).fetchone()
+
+        owner_principal = who(op)
+        if owner_principal:
+            c.execute("INSERT INTO project_member (project_id, principal_id) VALUES (%s,%s) ON CONFLICT DO NOTHING",
+                      (proj["id"], owner_principal))
 
         for i, kind in enumerate(PHASES):
             c.execute(
@@ -527,7 +562,15 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
                 (proj["id"], kind, i, kind == "implementation"))
         _emit(c, who(op), "project", str(proj["id"]), "created", {"code": code}, code)
 
-    notes = [f"Vyplň prd/{code}/50-glossary.md, pak založ první úkol."]
+    try:
+        from .repository import queue_static_scan
+        queue_static_scan(str(proj["id"]), repo)
+    except Exception as e:  # scan je obnovitelný; projekt už bezpečně existuje
+        notes = [f"Statický scan se nepodařilo spustit: {e}"]
+    else:
+        notes = ["Statický scan je hotový; LLM analýza čeká na osobní provider login."]
+
+    notes.append(f"Vyplň prd/{code}/50-glossary.md, pak založ první úkol.")
     if not flow:
         notes.append("Workflow se nezaložilo — bránu před mergem nemá co spustit.")
     if not gate:
@@ -624,6 +667,8 @@ def gate_status(code: str, op: dict = Depends(operator)):
         verdict = (f"POŽADOVANÉ STATUSY SE NEPOTKÁVAJÍ S VYDANÝMI — merge zůstane "
                    f"zablokovaný navždy. Požaduje se {required}, Forgejo vydává {seen}. "
                    f"Přepiš „Požadované statusy\" v panelu.")
+    elif not approvals or approvals < 1:
+        verdict = "branch protection nevyžaduje lidské schválení — nastav alespoň 1"
     elif not webhook:
         verdict = "brána stojí, ale webhook chybí — úkol se po mergi nepřepne na hotovo"
     else:
@@ -633,7 +678,8 @@ def gate_status(code: str, op: dict = Depends(operator)):
             "workflow": workflow, "status_check": status_check,
             "required_contexts": required, "seen_contexts": seen, "matched": matched,
             "required_approvals": approvals, "webhook": webhook,
-            "ok": bool(workflow and status_check and required and matched and webhook),
+            "ok": bool(workflow and status_check and required and matched and webhook
+                       and approvals and approvals >= 1),
             "verdict": verdict}
 
 
@@ -661,6 +707,15 @@ def gate_apply(code: str, op: dict = Depends(operator)):
         raise HTTPException(400, f"z repo_url '{proj['repo_url']}' nepoznám majitele a jméno")
     owner, name = m.group(1), m.group(2)
 
+    # Aktualizace správcovské workflow na main by se jinak správně zastavila
+    # o vlastní branch protection. Gate repair ji odstraní jen pro tento
+    # jeden serverový zápis a níže ji bez ohledu na výsledek znovu nasadí.
+    try:
+        httpx.delete(
+            f"{FORGEJO_URL}/api/v1/repos/{owner}/{name}/branch_protections/main",
+            headers={"Authorization": f"token {FORGEJO_TOKEN}"}, timeout=30)
+    except Exception:
+        pass
     flow = _forgejo_seed_workflow(owner, name)
     # POST na existující ochranu vrací 409, proto ještě PATCH — jinak by
     # změna nastavení neplatila pro projekt, který ochranu už má.
@@ -671,7 +726,7 @@ def gate_apply(code: str, op: dict = Depends(operator)):
             headers={"Authorization": f"token {FORGEJO_TOKEN}"},
             json={"enable_status_check": True,
                   "status_check_contexts": _gate_contexts(),
-                  "required_approvals": cfg.get_int("MERGE_GATE_APPROVALS", 0)},
+                  "required_approvals": max(1, cfg.get_int("MERGE_GATE_APPROVALS", 1))},
             timeout=30)
         gate = gate or r.status_code in (200, 201)
     except Exception:
@@ -913,8 +968,9 @@ class Kill(BaseModel):
 def kill_switch(b: Kill, op: dict = Depends(operator)):
     with db() as c:
         c.execute("""UPDATE platform_state
-                        SET issuing_enabled = %s, reason = %s, updated_at = now()
-                      WHERE id = 1""", (b.enabled, b.reason))
+                        SET issuing_enabled = %s, reason = %s, updated_at = now(),
+                            epoch = epoch + CASE WHEN %s THEN 0 ELSE 1 END
+                      WHERE id = 1""", (b.enabled, b.reason, b.enabled))
     return {"issuing_enabled": b.enabled}
 
 

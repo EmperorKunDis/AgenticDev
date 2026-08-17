@@ -106,34 +106,49 @@ services:
       - /srv/agenticdev/data/forgejo:/data
     depends_on:
       postgres: { condition: service_healthy }
+    networks: [default, runner-isolated]
 
   # ─── Brána před mergem ───────────────────────────────────────
   # Runner pouští workflow z repozitářů projektů. Smysl je v tom, že to
   # NENÍ pod agenta: testy ověřuje něco jiného než ten, kdo je napsal
   # (ADR-0006).
   #
-  # POZOR: runner potřebuje Docker socket, aby uměl spouštět joby v
-  # kontejnerech. Kdo umí mluvit s tímhle socketem, je na tomhle stroji
-  # rovnocenný rootovi. Běží to vedle databáze a podpisového klíče a je to
-  # vědomý kompromis, ne nedopatření.
+  # Joby používají oddělený Docker-in-Docker daemon. Runner nikdy nevidí
+  # hostitelský Docker socket, databázi ani podpisový klíč.
+  runner-docker:
+    <<: [*restart, *logging]
+    image: docker:${DIND_TAG:-27-dind}
+    profiles: ["gate"]
+    privileged: true
+    environment:
+      DOCKER_TLS_CERTDIR: ""
+    command: ["--host=tcp://0.0.0.0:2375"]
+    volumes:
+      - runner-docker-data:/var/lib/docker
+    networks: [runner-isolated]
+
   runner:
     <<: [*restart, *logging]
     image: code.forgejo.org/forgejo/runner:${RUNNER_TAG:-6}
     profiles: ["gate"]          # bez registrace nemá co dělat
-    user: root
     command: >-
-      sh -c "forgejo-runner create-runner-file --instance $${FORGEJO_INSTANCE}
-               --secret $${RUNNER_SECRET} --connect || true;
-             forgejo-runner daemon"
+      sh -c "test -s /data/.runner || forgejo-runner register --no-interactive --instance $${FORGEJO_INSTANCE} --token $${RUNNER_SECRET} --name agenticdev --labels docker:docker://node:20-bookworm; forgejo-runner daemon"
     environment:
-      FORGEJO_INSTANCE: http://forgejo:3000
+      # Job containers run inside the isolated DinD daemon and cannot resolve
+      # Compose service names such as `forgejo`. Register the runner with the
+      # externally routable HTTPS URL so checkout works from both layers.
+      FORGEJO_INSTANCE: ${FORGEJO_ROOT_URL:?chybi FORGEJO_ROOT_URL}
       RUNNER_SECRET: ${RUNNER_SECRET:?chybi RUNNER_SECRET}
       TZ: ${TZ:-Europe/Prague}
+      DOCKER_HOST: tcp://runner-docker:2375
     volumes:
       - /srv/agenticdev/data/runner:/data
-      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       forgejo: { condition: service_started }
+      runner-docker: { condition: service_started }
+    networks: [runner-isolated]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
 
   # ─── Artefakty, transkripty, kontext bundly ──────────────────
   minio:
@@ -167,9 +182,10 @@ services:
       S3_ACCESS_KEY: agenticdev
       S3_SECRET_KEY: ${MINIO_ROOT_PASSWORD}
       GIT_BASE: ssh://git@${VPS_HOST}:2222
-      DEFAULT_MODEL: ${DEFAULT_MODEL:-gpt-5.5}
-      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-api.openai.com,registry.npmjs.org,pypi.org}
-      LOCAL_MODEL: ${LOCAL_MODEL:-local/qwen2.5-coder:32b}
+      PROVIDER_ALLOWLIST: ${PROVIDER_ALLOWLIST:-claude,codex}
+      CLAUDE_MODEL_POLICY: ${CLAUDE_MODEL_POLICY:-}
+      CODEX_MODEL_POLICY: ${CODEX_MODEL_POLICY:-}
+      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-api.openai.com,api.anthropic.com,registry.npmjs.org,pypi.org}
       WORKSPACE_ROOT: /workspace-templates
       JOIN_TOKEN: ${JOIN_TOKEN:?chybi JOIN_TOKEN}
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?chybi DASHBOARD_TOKEN}
@@ -191,6 +207,7 @@ services:
       ADMIN_NAME: ${ADMIN_NAME:-}
       ADMIN_EMAIL: ${ADMIN_EMAIL:-}
       WO_VERIFY_KEY_B64: ${WO_VERIFY_KEY_B64:-}
+      BROKER_SECRET: ${BROKER_SECRET:?chybi BROKER_SECRET}
       CONTROL_PLANE_URL: ${CONTROL_PLANE_URL:-}
       LEASE_HOURS: ${LEASE_HOURS:-4}
       # ─── veřejná registrace (Tailscale Funnel → /join) ───────────
@@ -222,3 +239,9 @@ services:
 #  prometheus: { image: prom/prometheus:v3.2.1,  ... }
 #  tempo:      { image: grafana/tempo:2.7.1,     ... }
 #  grafana:    { image: grafana/grafana:11.5.2,  ... }
+
+networks:
+  runner-isolated: {}
+
+volumes:
+  runner-docker-data:

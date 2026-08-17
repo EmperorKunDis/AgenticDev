@@ -3,7 +3,7 @@
 Stav repozitáře a co s ním dál. Psáno pro chvíli, kdy někdo (člověk nebo
 agent) dostane přístup k repu a má pokračovat.
 
-Poslední aktualizace: 11. 8. 2026
+Poslední aktualizace: 16. 8. 2026
 
 ---
 
@@ -24,7 +24,7 @@ se kód parsuje:
 
 | Co | Riziko |
 |---|---|
-| **Sandbox (pod)** | mounty, proxy a uid nikdy neběžely proti Dockeru |
+| **Strict runtime acceptance** | broker, mounty, proxy a UID potřebují nový úplný zaznamenaný live run |
 | **Windows klient** | WSL2 cesta, `wslpath`, zástupce s ikonou |
 | **Linux klient** | detekce správce balíčků, ikona v nabídce |
 | **Tailscale Funnel** | vystavení `/join` zvenčí, mapování cest, auth key |
@@ -67,6 +67,10 @@ se kód parsuje:
 - Přihlášení do panelu má stejné omezení pokusů (dřív žádné nemělo)
 - 12 vlastností izolace ověřeno proti `pod/compose.yaml`
 - V dokumentaci nezbyly odkazy na neexistující cesty
+- Automatický enrollment je collision-safe a device auth používá jednorázový Ed25519 proof-of-possession
+- Nativní Claude/Codex adaptéry, provider profily a obnovitelné AUTH_REQUIRED/RATE_LIMITED stavy jsou implementované
+- Commit-pinned repository analysis, otázky, lidské schválení a mutační gate jsou implementované
+- Forgejo runner nepoužívá host Docker socket; joby obsluhuje samostatný izolovaný Docker-in-Docker daemon
 
 ---
 
@@ -78,8 +82,8 @@ Jsou popsané v README i SECURITY.md. Nejsou to překvapení, ale nedělej,
 | Díra | Dopad |
 |---|---|
 | Brána před mergem neběžela proti živému Forgeju | `agenticdev-ctl gate <projekt>` ji změří, ale dokud neuvidíš červenou kontrolu zablokovat merge, není to dokázané |
-| Repozitář bez testů projde branou nazeleno | prázdná brána není brána; workflow to hlásí jen jako varování v logu |
-| Orchestrační vrstva (directors) neexistuje | postup vynucují kontroly projektu v harnessu (ADR-0003) |
+| Brána bez testů a approval nemá live důkaz | workflow nyní bez rozpoznaných testů selže a vynucuje approval ≥ 1; potvrď to na skutečném PR |
+| Samostatně distribuované director balíky nejsou zavedené | role běží oddělenými nativními CLI procesy z verzovaného harness image |
 | Join heslo nemá expiraci | odvolání = změna hesla všem |
 | Útrata se neměří | tokeny neohlašuje nikdo; `cost_czk` je 0 a panel píše „neměří se" místo `0 Kč`. `PRICING` v kódu nikdy nebyla, `len/3` je rozpočtová brána na kontext |
 | Chybí metriky a trace | Grafana, Loki, Prometheus, Tempo zakomentované. Ledger, `agent_run`, transkripty a časová osa úkolu ale fungují |

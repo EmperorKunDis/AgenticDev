@@ -24,6 +24,10 @@ FROM phase p JOIN project pr ON pr.id = p.project_id WHERE pr.code = 'sandbox';
 INSERT INTO principal (kind, display_name, email)
 VALUES ('human', 'Martin Švanda', 'martin@praut.cz');
 
+INSERT INTO project_member (project_id, principal_id)
+SELECT p.id, pr.id FROM project p CROSS JOIN principal pr
+WHERE p.code='sandbox' AND pr.email='martin@praut.cz';
+
 INSERT INTO harness_version (semver, image_digest)
 VALUES ('0.1.0', 'sha256:0000000000000000000000000000000000000000000000000000000000000000');
 

@@ -131,6 +131,23 @@ async def forgejo_hook(request: Request):
     except ValueError:
         raise HTTPException(400, "tělo není JSON")
 
+    repository = payload.get("repository") or {}
+    default_branch = repository.get("default_branch") or "main"
+    if payload.get("ref") == f"refs/heads/{default_branch}" and payload.get("after"):
+        full_name = repository.get("full_name") or ""
+        with db() as c:
+            project = c.execute(
+                "SELECT id,repo_url FROM project WHERE repo_url LIKE %s ORDER BY created_at DESC LIMIT 1",
+                (f"%/{full_name}.git",)).fetchone()
+        if project:
+            from .repository import queue_static_scan
+            try:
+                analysis = queue_static_scan(str(project["id"]), project["repo_url"])
+                return {"ok": True, "analysis": str(analysis["id"]), "state": "awaiting_provider"}
+            except HTTPException as exc:
+                return {"ok": False, "analysis_refresh": "failed", "detail": exc.detail}
+        return {"ok": True, "ignored": "push repozitáře není přiřazen projektu"}
+
     pr = payload.get("pull_request") or {}
     # Zajímá nás jedna jediná věc: PR se zavřel a byl smergovaný.
     if payload.get("action") != "closed" or not pr.get("merged"):

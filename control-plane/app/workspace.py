@@ -1,16 +1,15 @@
 """
-Workspace API — servíruje konfiguraci Pi na stanice.
+Workspace API — skládá provider-neutral serverový context bundle.
 
 Tohle je ta modrá vrstva z náčrtu: „serving directors".
-VPS neposílá běžícího agenta. Posílá NASTAVENÍ Pi pro daný projekt a fázi.
+VPS skládá instrukce a kontext pro nativní Claude Code a Codex CLI.
 
 Co se doopravdy servíruje (a nic víc — dřív tu stál seznam, který
 obsahoval subagenty, hooky a MCP servery, jenže ty v žádné vrstvě nejsou):
 
     AGENTS.md            instrukce, řetězí se přes vrstvy
-    .pi/settings.json    nastavení Pi, slévá se přes vrstvy
-    .pi/skills/          skills
-    .pi/prompts/         slash příkazy
+    .agenticdev/skills/  canonical skills, materializované pro oba providery
+    .pi/                 historická kompatibilní data, nativní runtime je nenačítá
     bin/                 agenticdev-git, agenticdev-decision
     .agenticdev/         fáze, scope, projekt, úkoly ve stavu ready
 
@@ -92,15 +91,17 @@ def list_for_workstation(ws: dict = Depends(current_ws)):
     """Co si můžu vybrat, když dvojkliknu na ikonu."""
     with db() as c:
         rows = c.execute(
-            """SELECT p.code, p.data_class, p.repo_url,
+            """SELECT p.code, p.data_class, p.repo_url, p.analysis_status,
                       cl.name AS client_name,
                       (SELECT kind FROM phase WHERE project_id = p.id AND active LIMIT 1) AS phase,
                       (SELECT count(*) FROM task t JOIN phase ph ON ph.id = t.phase_id
                         WHERE ph.project_id = p.id AND t.state = 'ready') AS ready_tasks
                FROM project p
                LEFT JOIN client cl ON cl.id = p.client_id
-               WHERE p.active
+               JOIN project_member pm ON pm.project_id=p.id
+               WHERE p.active AND pm.active AND pm.principal_id=%s
                ORDER BY p.code"""
+            , (ws["principal_id"],)
         ).fetchall()
     return {"projects": rows}
 
@@ -116,7 +117,9 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
             """SELECT p.*, cl.name AS client_name,
                       (SELECT kind FROM phase WHERE project_id = p.id AND active LIMIT 1) AS phase
                FROM project p LEFT JOIN client cl ON cl.id = p.client_id
-               WHERE p.code = %s AND p.active""", (code,)).fetchone()
+               JOIN project_member pm ON pm.project_id=p.id
+               WHERE p.code = %s AND p.active AND pm.active AND pm.principal_id=%s""",
+            (code, ws["principal_id"])).fetchone()
         if not proj:
             raise HTTPException(404, f"projekt '{code}' neexistuje nebo není aktivní")
 
@@ -132,6 +135,11 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
         who = c.execute(
             "SELECT display_name, email FROM principal WHERE id = %s",
             (ws["principal_id"],)).fetchone() or {}
+
+        analysis = c.execute(
+            """SELECT id,commit_sha,analyzer_version,state,static_scan,result,answers
+               FROM repository_analysis WHERE project_id=%s ORDER BY updated_at DESC LIMIT 1""",
+            (proj["id"],)).fetchone()
 
         c.execute(
             """INSERT INTO event (actor_id, subject_type, subject_id, verb, payload, dedupe_key)
@@ -174,6 +182,15 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
     }
     files = {p: _render(t, vars) for p, t in files.items()}
 
+    # Canonical provider-neutral bundle se materializuje do obou nativních
+    # discovery formátů. Zdroj je serverový; importované repo ho neurčuje.
+    for path, content in list(files.items()):
+        prefix = ".agenticdev/skills/"
+        if path.startswith(prefix) and path.endswith("/SKILL.md"):
+            relative = path[len(prefix):]
+            files[f".claude/skills/{relative}"] = content
+            files[f".agents/skills/{relative}"] = content
+
     if agents_parts:
         files["AGENTS.md"] = _render("\n".join(agents_parts), vars)
     if settings_layers:
@@ -185,7 +202,7 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
     # jinou odpověď a nešlo by to srovnat. Sdílené je tedy i JMÉNO modelu;
     # osobní zůstává jen to, kdo ho platí.
     #
-    # Když ho něčí předplatné neumí, Pi to řekne a nepustí ho dál. To je
+    # Když ho něčí předplatné neumí, nativní CLI vrátí chybu. To je
     # záměr: tichá záměna modelu za jiný je přesně ten druh degradace,
     # kterou zakazuje P5.
     allow = proj["model_allowlist"] or (
@@ -199,6 +216,17 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
     files[".agenticdev/phase"] = phase
     files[".agenticdev/scope"] = "\n".join(scope) + "\n"
     files[".agenticdev/project"] = code
+    if analysis and analysis["state"] == "ready":
+        files[".agenticdev/repository-analysis.json"] = json.dumps(
+            {"commit_sha": analysis["commit_sha"],
+             "analyzer_version": analysis["analyzer_version"],
+             "result": analysis["result"], "answers": analysis["answers"]},
+            ensure_ascii=False, indent=2)
+    if analysis and analysis["state"] in ("awaiting_provider", "analyzing"):
+        files[".agenticdev/repository-analysis-request.json"] = json.dumps(
+            {"id": str(analysis["id"]), "commit_sha": analysis["commit_sha"],
+             "analyzer_version": analysis["analyzer_version"],
+             "static_scan": analysis["static_scan"]}, ensure_ascii=False, indent=2)
     if tasks:
         files[".agenticdev/tasks.md"] = "# Úkoly ve stavu ready\n\n" + "\n\n".join(
             f"## {t['title']}\n"
@@ -216,6 +244,7 @@ def bundle(code: str, phase: str | None = None, ws: dict = Depends(current_ws)):
             "phase": phase,
             "data_class": proj["data_class"],
             "model_allowlist": proj["model_allowlist"],
+            "analysis_status": proj["analysis_status"],
         },
         "scope": scope,
         "ready_tasks": len(tasks),

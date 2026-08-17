@@ -146,9 +146,11 @@ fi
 
 install -d -m 0750 $ROOT $ROOT/config $ROOT/data $ROOT/backup $ROOT/out
 install -d -m 0750 $ROOT/data/{postgres,forgejo,minio,caddy,directors}
+install -d -o 1000 -g 1000 -m 0750 "$ROOT/data/runner"
 # Forgejo běží v kontejneru pod uid 1000. Bez tohohle nepřečte vlastní
 # app.ini ("permission denied") a skončí v restart-loopu.
 chown -R 1000:1000 $ROOT/data/forgejo
+chown -R 1000:1000 "$ROOT/data/runner"
 : >"$LOG"; chmod 600 "$LOG"
 
 # zdroj: nahradíme jen soubory platformy, data a config zůstávají
@@ -185,7 +187,7 @@ if [[ -f $ENVF ]]; then
   # shellcheck disable=SC1090
   set -a; . $ENVF; set +a
   DOMAIN="${AGENTICDEV_DOMAIN:-}"; ADMIN_EMAIL="${FORGEJO_ADMIN_EMAIL:-}"
-  ADMIN_USER="${FORGEJO_ADMIN_USER:-admin}"
+  ADMIN_USER="${FORGEJO_ADMIN_USER:-agentic-admin}"
   info "tajemství zůstávají, měnit je nebudu"
 else
   step "Nastavení — pár otázek, pak už nic"
@@ -211,7 +213,8 @@ else
   [[ "$ADMIN_NAME" == *" "* ]] || warn "jen jedno slovo? V auditní stopě to bude takhle."
   ask ADMIN_EMAIL "Tvůj e-mail (správce instance)" ""
   [[ -n "$ADMIN_EMAIL" ]] || die "e-mail je povinný — Forgejo bez něj admina nezaloží"
-  ask ADMIN_USER "Přihlašovací jméno do gitu" "admin"
+  # Forgejo 11 reserves the literal username "admin" and rejects bootstrap.
+  ask ADMIN_USER "Přihlašovací jméno do gitu" "agentic-admin"
 
   echo
   info "Dvě hesla. Vymysli si je teď, jinam se zapisovat nebudou."
@@ -220,14 +223,8 @@ else
   askpw ADMIN_PW  "Heslo do admin panelu" 12
   askpw ENROLL_PW "Heslo pro připojení strojů" 10
 
-  # Dodavatel modelů, API klíč, DEFAULT_MODEL i EGRESS_ALLOWLIST jsou
-  # DB-backed nastavení (viz control-plane/app/settings.py EDITABLE) —
-  # panel je mění za běhu, bez restartu. Ptát se na to teď, uprostřed
-  # instalace, kdy člověk často nemá klíč po ruce, je zbytečná zábrana
-  # navíc. Necháme rozumný výchozí stav a dotaz přesuneme tam, kde se dá
-  # kdykoli beztrestně změnit: Nastavení → Modely v panelu.
-  MODEL_BACKEND=openai; MODEL_BASE_URL=https://api.openai.com/v1
-  DEFAULT_MODEL=gpt-5.5; MODEL_KEY=""
+  # Subscription credentials se nikdy neptá root instalátor ani panel.
+  # Každý uživatel se přihlásí nativním CLI pod vlastním UID.
 
   ask SMTP_HOST "SMTP host (Enter = přeskočit maily)" ""
   if [[ -n "${SMTP_HOST:-}" ]]; then
@@ -244,7 +241,9 @@ export DEBIAN_FRONTEND=noninteractive
 run "apt update              " apt-get update -qq
 run "instalace nástrojů      " apt-get install -y -qq \
   ca-certificates curl gnupg git jq ufw fail2ban unattended-upgrades \
-  restic openssl rsync python3 iproute2
+  restic openssl rsync python3 python3-cryptography iproute2 xfsprogs
+run "instalace agentů       " apt-get install -y -qq nodejs npm
+run "Claude a Codex CLI      " npm install -g @anthropic-ai/claude-code @openai/codex
 
 step "Docker"
 if ! command -v docker >/dev/null; then
@@ -260,6 +259,8 @@ fi
 systemctl enable --now docker >>"$LOG" 2>&1 || true
 docker compose version >/dev/null 2>&1 || die "docker compose plugin chybí"
 ok "$(docker --version | cut -d, -f1)"
+bash "$STAGE/tools/runtime-host-check.sh" >>"$LOG" 2>&1 \
+  || die "host neumí povinné cgroups/overlay2/XFS project quota; viz $LOG"
 
 # ═══════════════════════════════════════════════════════════════════════
 #  3. Jak se k platformě dostanou lidi
@@ -441,12 +442,12 @@ if (( FRESH )); then
 
   INSTANCE_ID=$(cat /proc/sys/kernel/random/uuid)
   PG_PW=$(gen 48 40); MINIO_PW=$(gen 48 40); JWT=$(gen 64 56)
-  FJ_PW=$(gen 32 24); JOIN_TOKEN=$(gen 48 40); DASH_TOKEN=$(gen 32 20)
+  FJ_PW=$(gen 32 24); JOIN_TOKEN=$(gen 48 40); DASH_TOKEN=$(gen 32 20); BROKER_SECRET=$(gen 64 56)
   # Forgejo bez SECRET_KEY + INSTALL_LOCK nabíhá do instalačního
   # průvodce a `forgejo admin ...` selže na MustInstalled().
   FJ_SECRET=$(gen 80 64)
-  # Podpis webhooku z Forgeja a registrace runneru. Runner secret musí být
-  # 40 hex znaků — forgejo-runner na jiný formát nesedne.
+  # Podpis webhooku a dočasná výchozí hodnota runner tokenu. Skutečný
+  # registrační token vydá Forgejo po svém prvním startu níže.
   FJ_HOOK_SECRET=$(gen 48 40)
   RUNNER_SECRET=$(openssl rand -hex 20)
 
@@ -493,6 +494,7 @@ MINIO_ROOT_PASSWORD=$MINIO_PW
 JWT_SECRET=$JWT
 WO_SIGNING_KEY_B64=$WO_PRIV
 WO_VERIFY_KEY_B64=$WO_PUB
+BROKER_SECRET=$BROKER_SECRET
 JOIN_TOKEN=$JOIN_TOKEN
 DASHBOARD_TOKEN='$(envq "$ADMIN_PW")'
 ENROLL_PASSWORD='$(envq "$ENROLL_PW")'
@@ -524,11 +526,9 @@ SMTP_PASSWORD='$(envq "${SMTP_PASS:-}")'
 SMTP_FROM='$(envq "$ADMIN_EMAIL")'
 
 # ─── modely ──────────────────────────────────────────────────
-MODEL_BACKEND=$MODEL_BACKEND
-MODEL_BASE_URL=$MODEL_BASE_URL
-MODEL_API_KEY='$(envq "${MODEL_KEY:-}")'
-DEFAULT_MODEL=$DEFAULT_MODEL
-LOCAL_MODEL=local/qwen2.5-coder:32b
+PROVIDER_ALLOWLIST=claude,codex
+CLAUDE_MODEL_POLICY=
+CODEX_MODEL_POLICY=
 MODEL_MAX_TOKENS=8000
 OLLAMA_HOST=http://host.docker.internal:11434
 EGRESS_ALLOWLIST=$ALLOW
@@ -562,7 +562,9 @@ else
   add FORGEJO_HOOK_SECRET "$(openssl rand -base64 48 | tr -d '\n=+/' | cut -c1-40)"
   add RUNNER_SECRET     "$(openssl rand -hex 20)"
   add RUNNER_TAG        6
-  add LOCAL_MODEL       "local/qwen2.5-coder:32b"
+  add PROVIDER_ALLOWLIST "claude,codex"
+  add CLAUDE_MODEL_POLICY ""
+  add CODEX_MODEL_POLICY ""
   add CONTROL_PLANE_URL "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo "https://$AGENTICDEV_DOMAIN" || echo "http://$TS_IP:8080")"
   add FORGEJO_ROOT_URL  "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo "https://$AGENTICDEV_DOMAIN/git/" || echo "http://$TS_IP:3000/")"
   if ! grep -q '^WO_VERIFY_KEY_B64=..' $ENVF; then
@@ -582,6 +584,11 @@ open(p, 'w').write(s)
 PY
   fi
   ok "konfigurace doplněna"
+fi
+
+if ! grep -q '^BROKER_SECRET=..' "$ENVF"; then
+  printf 'BROKER_SECRET=%s\n' "$(openssl rand -hex 32)" >>"$ENVF"
+  chmod 600 "$ENVF"
 fi
 
 # shellcheck disable=SC1090
@@ -624,6 +631,9 @@ fi
 info "první běh staví image control plane, 2–3 minuty"
 run "docker compose up      " bash -c \
   "cd '$SRC/vps' && docker compose $PROFILE_ARGS --env-file $ENVF up -d --build"
+if [[ "$AGENTICDEV_MODE" == "public" ]]; then
+  dc restart caddy >>"$LOG" 2>&1 || die "Caddy nenačetlo aktuální konfiguraci"
+fi
 
 printf "  čekám na databázi       "
 for i in $(seq 1 60); do
@@ -641,13 +651,13 @@ for i in $(seq 1 60); do
 done
 printf " ${GRN}✓${OFF}\n"
 
-# Sandbox projekt narovnat na tuhle instanci: model, který jsi vybral, a
-# skutečná adresa gitu. V seedu je zástupné 'vps', které se nikde
+# Sandbox projekt narovnat na tuhle instanci a skutečnou adresu gitu.
+# Model spravuje zvolené osobní subscription CLI. V seedu je zástupné 'vps', které se nikde
 # nepřeloží — bez tohohle by první klik na ikonu skončil u repozitáře,
 # ke kterému se nedá připojit.
 dc exec -T postgres psql -qtAX -U agenticdev -d agenticdev -c \
   "UPDATE project
-      SET model_allowlist = ARRAY['$DEFAULT_MODEL','$LOCAL_MODEL'],
+      SET model_allowlist = NULL,
           repo_url = 'ssh://git@$VPS_HOST:2222/$FORGEJO_ADMIN_USER/sandbox.git'
     WHERE code = 'sandbox'" >>"$LOG" 2>&1 || true
 
@@ -671,6 +681,24 @@ if ! dc exec -T -u git forgejo forgejo admin user list 2>/dev/null \
     && ok "admin '$FORGEJO_ADMIN_USER'" || warn "admina se nepodařilo vytvořit, viz $LOG"
 else
   ok "admin '$FORGEJO_ADMIN_USER' už existuje"
+fi
+
+# Registrační token runneru vydává Forgejo; náhodný secret autentizaci
+# nesplní. Vytvoř ho až po startu Forgeja a jen dokud runner nemá svůj
+# persistentní registrační soubor, aby upgrade nezakládal duplicity.
+if [[ ! -s "$ROOT/data/runner/.runner" ]] \
+   || grep -q '"id"[[:space:]]*:[[:space:]]*0' "$ROOT/data/runner/.runner"; then
+  RUNNER_TOKEN=$(dc exec -T -u git forgejo forgejo actions generate-runner-token \
+                 2>/dev/null | tr -d '\r\n' || true)
+  if [[ -n "$RUNNER_TOKEN" ]]; then
+    sed -i "s|^RUNNER_SECRET=.*|RUNNER_SECRET=$RUNNER_TOKEN|" "$ENVF"
+    RUNNER_SECRET=$RUNNER_TOKEN
+    rm -f "$ROOT/data/runner/.runner"
+    run "registrace runneru     " bash -c \
+      "cd '$SRC/vps' && docker compose $PROFILE_ARGS --env-file $ENVF up -d --force-recreate runner"
+  else
+    warn "Forgejo nevydalo registrační token runneru"
+  fi
 fi
 
 if [[ -z "${FORGEJO_TOKEN:-}" ]]; then
@@ -726,7 +754,62 @@ fi
 #  9. Nástroje na VPS
 # ═══════════════════════════════════════════════════════════════════════
 step "Nástroje"
+if [[ ! -f "$ROOT/config/broker_git_key" ]]; then
+  ssh-keygen -q -t ed25519 -N '' -C agenticdev-broker -f "$ROOT/config/broker_git_key"
+fi
+chmod 600 "$ROOT/config/broker_git_key"; chmod 644 "$ROOT/config/broker_git_key.pub"
+ssh-keyscan -p 2222 "$VPS_HOST" >"$ROOT/config/broker_known_hosts" 2>>"$LOG" \
+  || die "nelze připnout Forgejo SSH host key pro broker"
+chmod 600 "$ROOT/config/broker_known_hosts"
+if [[ -n "${FORGEJO_TOKEN:-}" ]]; then
+  PUB=$(cat "$ROOT/config/broker_git_key.pub")
+  if ! curl -fsS "http://$VPS_HOST:3000/api/v1/user/keys" -H "Authorization: token $FORGEJO_TOKEN" \
+       | jq -e --arg k "$PUB" 'any(.[]; .key == $k)' >/dev/null; then
+    curl -fsS -X POST "http://$VPS_HOST:3000/api/v1/user/keys" \
+      -H "Authorization: token $FORGEJO_TOKEN" -H 'content-type: application/json' \
+      -d "$(jq -nc --arg t agenticdev-broker --arg k "$PUB" '{title:$t,key:$k,read_only:false}')" \
+      >/dev/null || die "Forgejo odmítlo broker Git key"
+  fi
+else
+  die "FORGEJO_TOKEN chybí; broker nemůže bezpečně provisionovat Git"
+fi
+getent group agenticdev-broker >/dev/null || groupadd --system agenticdev-broker
+for home in /home/*; do
+  [[ -f "$home/.agenticdev/config" ]] || continue
+  login=$(basename "$home")
+  getent group docker >/dev/null && gpasswd -d "$login" docker >/dev/null 2>&1 || true
+  getent group sudo >/dev/null && gpasswd -d "$login" sudo >/dev/null 2>&1 || true
+  loginctl terminate-user "$login" >/dev/null 2>&1 || true
+  usermod -aG agenticdev-broker "$login"
+  id -nG "$login" | tr ' ' '\n' | grep -qx docker && die "$login zůstal v docker group"
+  id -nG "$login" | tr ' ' '\n' | grep -qx sudo && die "$login zůstal v sudo group"
+done
+install -d -m 0755 /etc/systemd/system/containerd.service.d
+install -m 0644 "$SRC/vps/containerd-agenticdev.conf" \
+  /etc/systemd/system/containerd.service.d/agenticdev-socket.conf
+[[ ! -S /var/run/docker.sock ]] || { chown root:docker /var/run/docker.sock; chmod 0660 /var/run/docker.sock; }
+[[ ! -S /run/containerd/containerd.sock ]] || { chown root:root /run/containerd/containerd.sock; chmod 0600 /run/containerd/containerd.sock; }
+install -d -m 0750 /usr/local/lib/agenticdev
+install -d -m 0750 /var/lib/agenticdev-broker /srv/agenticdev/workloads /srv/agenticdev/repos /srv/agenticdev/identities
+install -d -m 0770 -o root -g agenticdev-broker /run/agenticdev
+install -m 0750 "$SRC/vps/broker.py" /usr/local/lib/agenticdev/broker.py
+install -m 0755 "$SRC/vps/broker-client.py" /usr/local/bin/agenticdev-broker-client
+install -m 0644 "$SRC/vps/agenticdev-broker.service" /etc/systemd/system/agenticdev-broker.service
+docker build -t agenticdev/pod:installed "$SRC/pod" >>"$LOG" 2>&1
+docker build -t agenticdev/egress:installed "$SRC/pod/egress" >>"$LOG" 2>&1
+systemctl daemon-reload
+systemctl enable agenticdev-broker.service >>"$LOG" 2>&1
+systemctl restart agenticdev-broker.service >>"$LOG" 2>&1
+systemctl is-active --quiet agenticdev-broker.service || die "privileged broker neběží"
+for _ in $(seq 1 20); do [[ -S /run/agenticdev/broker.sock ]] && break; sleep 1; done
+[[ -S /run/agenticdev/broker.sock ]] || die "broker socket nevznikl"
+[[ "$(stat -c '%a %U %G' /run/agenticdev/broker.sock)" == "660 root agenticdev-broker" ]] \
+  || die "broker socket má nebezpečná práva"
 install -m 0755 "$SRC/vps/agenticdev-ctl" /usr/local/bin/agenticdev-ctl
+install -m 0644 "$SRC/vps/agenticdev-enrollment.service" /etc/systemd/system/agenticdev-enrollment.service
+install -m 0644 "$SRC/vps/agenticdev-enrollment.timer" /etc/systemd/system/agenticdev-enrollment.timer
+systemctl daemon-reload
+systemctl enable --now agenticdev-enrollment.timer >>"$LOG" 2>&1
 # Launcher patří na VPS, protože tam běží pody (ADR-0005). Lidé ho pouštějí
 # po přihlášení přes Tailscale SSH.
 install -m 0755 "$SRC/launcher/agenticdev" /usr/local/bin/agenticdev
@@ -866,8 +949,7 @@ cat <<EOF
   Obsluha:             agenticdev-ctl status | logs | mac | backup-now${OFF}
 
 EOF
-[[ -z "${MODEL_KEY:-}" ]] && \
-  warn "dodavatele modelu a API klíč zatím nemáš — nastav je v panelu: Nastavení → Modely (platí okamžitě, bez restartu)"
+info "subscription credentials zůstávají v osobním ~/.claude nebo ~/.codex"
 [[ "$AGENTICDEV_MODE" == "tailnet" ]] && \
   info "Bez domény jede platforma jen po tailnetu. Doménu doplníš do $ENVF (AGENTICDEV_DOMAIN, AGENTICDEV_MODE=public) a pustíš 'agenticdev-ctl up'."
 
