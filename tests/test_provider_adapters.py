@@ -20,5 +20,9 @@ class ProviderAdapters(unittest.TestCase):
  def test_no_cross_provider_fallback(self):
   with mock.patch.object(mod.shutil,"which",return_value=None):
    self.assertEqual(mod.command("claude","x"),[]);self.assertEqual(mod.command("codex","x"),[])
+ def test_remote_codex_login_uses_device_flow(self):
+  launcher=(ROOT/"launcher/agenticdev").read_text()
+  self.assertIn("codex login --device-auth",launcher)
+  self.assertNotIn("|| codex login\n",launcher)
 
 if __name__=="__main__":unittest.main()
