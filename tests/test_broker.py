@@ -51,6 +51,11 @@ class Boundary(unittest.TestCase):
   self.b._get=lambda p,t:{'project':{'code':'other','phase':'implementation'},'files':{}}
   self.reject(self.manifest(),'workspace_bundle_mismatch')
  def test_replay(self): self.assertTrue(self.call(self.manifest())['ok']); self.reject(self.manifest(),'replay')
+ def test_runtime_start_failure_is_audited_for_control_plane_retry(self):
+  self.b.runner=lambda plan: (_ for _ in ()).throw(RuntimeError('docker start failed'))
+  self.reject(self.manifest(),'runtime_start_failed')
+  events=[json.loads(line) for line in self.b.audit_file.read_text().splitlines()]
+  self.assertTrue(any(e['verb']=='failed' and e['reason']=='runtime_start_failed' and e['work_order_id']==WO for e in events))
  def test_other_user(self): self.reject(self.manifest(),'wrong_user',user='mallory')
  def test_other_project(self):
   orig=self.authorize
