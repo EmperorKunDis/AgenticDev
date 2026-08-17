@@ -169,6 +169,14 @@ cmd_work() {
       -H "Authorization: Bearer $t" | jq -r .state)
     local analysis_json answers='{}' count question answer
     analysis_json=$(curl -fsS "$CONTROL_PLANE/v1/projects/$code/analysis" -H "Authorization: Bearer $t")
+    case "$analysis_status" in
+      failed)
+        die "Analýza selhala / Analysis failed: $(jq -r '.error // "neznámá chyba / unknown error"' <<<"$analysis_json")" ;;
+      analyzing|awaiting_provider)
+        die "Analýza nedodala výsledek / Analysis produced no result (stav/state '$analysis_status'). Zkontroluj transkript / Check the transcript." ;;
+      questions|review) ;;
+      *) die "Analýza skončila v neočekávaném stavu / Analysis ended in unexpected state '$analysis_status'." ;;
+    esac
     if [[ "$analysis_status" == questions ]]; then
       count=$(jq '.questions|length' <<<"$analysis_json")
       for ((i=0;i<count;i++)); do
@@ -254,10 +262,13 @@ DEC
   command -v agenticdev-broker-client >/dev/null \
     || die "Chybí klient privilegovaného brokeru; kontaktuj správce."
   c "Startuji pod přes privilegovaný broker"
-  local started
-  started=$(AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client start \
-    <<<"$(jq -c '.work_order' <<<"$wo")") \
-    || die "Broker workload odmítl."
+  local started broker_reason
+  if ! started=$(AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client start \
+      <<<"$(jq -c '.work_order' <<<"$wo")"); then
+    broker_reason=$(jq -r '.reason // "neznámý důvod / unknown reason"' <<<"$started" 2>/dev/null \
+      || printf '%s' "neznámý důvod / unknown reason")
+    die "Broker workload odmítl / Broker rejected workload: $broker_reason"
+  fi
   wo_id=$(jq -r '.work_order_id' <<<"$started")
   AGENTICDEV_DEVICE_TOKEN="$t" agenticdev-broker-client attach "$wo_id" \
     || die "Attach selhal nebo byl workload revokován."

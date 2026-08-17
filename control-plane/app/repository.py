@@ -139,11 +139,18 @@ class AnalysisResult(BaseModel):
     questions: list[dict] = Field(default_factory=list)
 
 
+class AnalysisFailure(BaseModel):
+    code: str
+    detail: str
+
+
 def _validate_result(result: dict, scan: dict) -> None:
     required = {"repository_map", "architecture", "commands", "glossary", "risks",
                 "missing_documentation", "first_tasks", "citations"}
     if not required.issubset(result) or not isinstance(result.get("citations"), list):
         raise HTTPException(422, "analysis JSON schema je neplatné")
+    if (scan.get("blobs") or {}) and not result["citations"]:
+        raise HTTPException(422, "analýza repozitáře musí obsahovat alespoň jednu citaci / repository analysis must contain at least one citation")
     for citation in result["citations"]:
         if not isinstance(citation, dict) or not isinstance(citation.get("path"), str):
             raise HTTPException(422, "citace nemá cestu")
@@ -162,7 +169,7 @@ def submit_result(project: str, body: AnalysisResult, ws: dict = Depends(current
         row = c.execute("""SELECT * FROM repository_analysis WHERE project_id=%s AND state='analyzing'
                            ORDER BY updated_at DESC LIMIT 1""", (proj["id"],)).fetchone()
         if not row:
-            raise HTTPException(409, "analýza neběží")
+            raise HTTPException(409, "analýza neběží / analysis is not running")
         _validate_result(body.result, row["static_scan"])
         state = "questions" if body.questions else "review"
         out = c.execute("""UPDATE repository_analysis SET result=%s,questions=%s,state=%s,updated_at=now()
@@ -170,6 +177,25 @@ def submit_result(project: str, body: AnalysisResult, ws: dict = Depends(current
                         (json.dumps(body.result), json.dumps(body.questions), state, row["id"])).fetchone()
         c.execute("UPDATE project SET analysis_status=%s WHERE id=%s", (state, proj["id"]))
     return out
+
+
+@router.post("/v1/projects/{project}/analysis/failure")
+def submit_failure(project: str, body: AnalysisFailure, ws: dict = Depends(current_ws)):
+    proj = _member(project, ws)
+    detail = " ".join(body.detail.split())[-2000:]
+    code = re.sub(r"[^A-Z0-9_:-]", "_", body.code.upper())[:64] or "FAILED"
+    with db() as c:
+        row = c.execute("""UPDATE repository_analysis
+                            SET state='failed',error=%s,updated_at=now()
+                            WHERE id=(SELECT id FROM repository_analysis
+                                      WHERE project_id=%s AND state='analyzing'
+                                      ORDER BY updated_at DESC LIMIT 1)
+                            RETURNING id,state,error""",
+                        (f"{code}: {detail}", proj["id"])).fetchone()
+        if not row:
+            raise HTTPException(409, "analýza neběží")
+        c.execute("UPDATE project SET analysis_status='failed' WHERE id=%s", (proj["id"],))
+    return row
 
 
 class Answers(BaseModel):
