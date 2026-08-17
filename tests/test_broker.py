@@ -71,6 +71,13 @@ class Boundary(unittest.TestCase):
   self.assertTrue(self.call(m)['ok'])
   flat='\n'.join(' '.join(c) for c in self.plans[0])
   self.assertIn('dst=/workspace/pyproject.toml',flat)
+ def test_missing_exact_file_scope_is_created_without_broadening_mount(self):
+  m=self.manifest();m['repo']['write_scope']=['pyproject.toml'];m['signature']='ed25519:'+base64.b64encode(self.private.sign(mod.canonical(m))).decode()
+  self.assertTrue(self.call(m)['ok'])
+  work=self.root/'workloads'/P/'alpha'/T
+  self.assertTrue((work/'pyproject.toml').is_file())
+  flat='\n'.join(' '.join(c) for c in self.plans[0])
+  self.assertIn('dst=/workspace/pyproject.toml',flat);self.assertNotIn('dst=/workspace,readonly\n--mount type=bind,src='+str(work)+',dst=/workspace',flat)
  def test_other_user(self): self.reject(self.manifest(),'wrong_user',user='mallory')
  def test_other_project(self):
   orig=self.authorize
