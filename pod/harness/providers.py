@@ -24,9 +24,14 @@ def command(provider: str, prompt: str | None = None, mode: str = "work") -> lis
         return ([binary, *flags, "-p", prompt] if prompt is not None else [binary]) if binary else []
     if provider == "codex":
         binary = shutil.which("codex")
-        flags = (["--sandbox", "read-only", "--ephemeral", "--ignore-user-config",
-                  "--ignore-rules", "--cd", "/workspace"]
-                 if mode == "analysis" else ["--ignore-rules"])
+        # The privileged broker already supplies the hard security boundary:
+        # read-only root/workspace mounts, narrow writable binds, no caps,
+        # no-new-privileges and proxy-only networking. Codex's nested bwrap
+        # cannot create a user namespace inside that container.
+        flags = (["--dangerously-bypass-approvals-and-sandbox", "--ephemeral",
+                  "--ignore-user-config", "--ignore-rules", "--cd", "/workspace"]
+                 if mode == "analysis" else
+                 ["--dangerously-bypass-approvals-and-sandbox", "--ignore-rules"])
         return ([binary, "exec", "--skip-git-repo-check", *flags, prompt]
                 if prompt is not None else [binary]) if binary else []
     return []

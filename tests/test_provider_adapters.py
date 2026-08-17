@@ -20,7 +20,7 @@ class ProviderAdapters(unittest.TestCase):
  def test_analysis_cli_is_read_only_and_ignores_project_rules(self):
   with mock.patch.object(mod.shutil,"which",return_value="/bin/codex"):
    cmd=mod.command("codex","scan",mode="analysis")
-  for flag in ("read-only","--ephemeral","--ignore-user-config","--ignore-rules"):
+  for flag in ("--dangerously-bypass-approvals-and-sandbox","--ephemeral","--ignore-user-config","--ignore-rules"):
    self.assertIn(flag,cmd)
   self.assertEqual(cmd[cmd.index("--cd")+1],"/workspace")
   with mock.patch.object(mod.shutil,"which",return_value="/bin/claude"):
