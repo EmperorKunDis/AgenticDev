@@ -318,10 +318,9 @@ def next_work_order(project: str, provider: str, analysis: bool = False,
                 "model_allowlist": models,
                 "egress_allowlist": os.environ.get(
                     "EGRESS_ALLOWLIST",
-                    "api.openai.com,registry.npmjs.org,pypi.org").split(","),
+                    "chatgpt.com,api.anthropic.com,registry.npmjs.org,pypi.org").split(","),
                 "human_gate": ["schema_migration", "dependency_add", "prod_deploy"],
                 "max_wall_clock_min": 240,
-                "budget_czk_total": float(task["budget_czk"]),
                 "max_loop_iterations": {"implement_test": 5, "review_rework": 3},
                 "budget_tokens": 120_000,
             },
@@ -386,7 +385,11 @@ def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: Non
         signed=set(m.get("policy",{}).get("egress_allowlist") or [])
         mandatory={urlparse(CONTROL_PLANE_URL).hostname}
         live=(signed & configured) | {x for x in mandatory if x}
-        if str(row["data_class"])=="restricted":live -= {"api.openai.com","api.anthropic.com","generativelanguage.googleapis.com"}
+        provider=str(m.get("runtime",{}).get("provider") or "")
+        provider_egress={"codex":{"chatgpt.com"},"claude":{"api.anthropic.com"}}
+        cloud_egress=set().union(*provider_egress.values())
+        live -= cloud_egress - provider_egress.get(provider,set())
+        if str(row["data_class"])=="restricted":live -= cloud_egress
         return {"authorized": True, **{k: str(row[k]) for k in
                 ("principal_id", "workstation_id", "project", "task_id", "phase", "work_order_id")},
                 "unix_user": row["unix_user"], "kill_epoch": int(row["epoch"]),
@@ -501,7 +504,6 @@ class Run(BaseModel):
     model: str
     tokens_in: int = 0
     tokens_out: int = 0
-    cost_czk: float = 0
     duration_ms: int | None = None
     outcome: str | None = None
     transcript_uri: str | None = None
@@ -513,20 +515,12 @@ def post_run(r: Run, ws: dict = Depends(current_ws)):
         row = c.execute(
             """INSERT INTO agent_run
                  (task_id, work_order_id, role, state_name, model,
-                  tokens_in, tokens_out, cost_czk, duration_ms, outcome, transcript_uri)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
+                  tokens_in, tokens_out, duration_ms, outcome, transcript_uri)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id""",
             (r.task_id, r.work_order_id, r.role, r.state_name, r.model,
-             r.tokens_in, r.tokens_out, r.cost_czk, r.duration_ms, r.outcome, r.transcript_uri),
+             r.tokens_in, r.tokens_out, r.duration_ms, r.outcome, r.transcript_uri),
         ).fetchone()
-        spent = c.execute(
-            "SELECT COALESCE(SUM(cost_czk),0) AS s FROM agent_run WHERE task_id = %s",
-            (r.task_id,),
-        ).fetchone()["s"]
-        budget = c.execute(
-            "SELECT budget_czk FROM task WHERE id = %s", (r.task_id,)
-        ).fetchone()["budget_czk"]
-    return {"run_id": row["id"], "spent_czk": float(spent),
-            "budget_czk": float(budget), "over_budget": spent > budget}
+    return {"run_id": row["id"]}
 
 
 # ═══════════════════════════════════════════════════════════════
@@ -610,12 +604,14 @@ from .workspace import router as _ws_router                       # noqa: E402
 from .enroll import router as _enroll_router                      # noqa: E402
 from .hooks import router as _hooks_router                        # noqa: E402
 from .repository import router as _repository_router              # noqa: E402
+from .developer_settings import router as _developer_settings_router  # noqa: E402
 
 app.include_router(_admin_router)
 app.include_router(_ws_router)
 app.include_router(_enroll_router)
 app.include_router(_hooks_router)
 app.include_router(_repository_router)
+app.include_router(_developer_settings_router)
 
 
 @app.on_event("startup")

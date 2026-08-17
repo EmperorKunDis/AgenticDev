@@ -120,7 +120,10 @@ cmd_work() {
     claude auth status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Claude není platné."
   else
     command -v codex >/dev/null || die "Codex CLI na VPS chybí."
-    codex login status >/dev/null 2>&1 || codex login
+    # Práce běží na vzdáleném VPS. Výchozí OAuth callback poslouchá na
+    # localhostu VPS a prohlížeč uživatele se k němu nedostane; device flow
+    # je určený pro SSH/headless prostředí.
+    codex login status >/dev/null 2>&1 || codex login --device-auth
     codex login status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Codex není platné."
   fi
   curl -fsS -X POST "$CONTROL_PLANE/v1/provider-profile" \

@@ -362,15 +362,12 @@ if [[ -f "$CK" ]]; then
   BOARD=$(curl -fsS --max-time 10 -b "$CK" "$API/v1/board" 2>/dev/null || true)
   if [[ -n "$BOARD" ]]; then
     RUNS=$(printf '%s' "$BOARD" | jqr "['runs_total']")
-    MEAS=$(printf '%s' "$BOARD" | jqr "['spend_measured']")
     if [[ "$RUNS" == "0" ]]; then
       warn "v ledgeru není žádný běh agenta — po prvním úkolu tu musí být aspoň 1"
       info "zapisuje ho harness na konci běhu (POST /v1/runs)"
     else
       ok "$RUNS běhů agenta v ledgeru"
     fi
-    [[ "$MEAS" == "False" || "$MEAS" == "false" ]] \
-      && info "útrata se neměří (tokeny neohlašuje nikdo) — panel to říká místo nuly"
   else
     warn "nástěnku se nepodařilo přečíst"
   fi

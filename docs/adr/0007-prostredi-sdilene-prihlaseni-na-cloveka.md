@@ -34,8 +34,8 @@ Rozdělit to podle toho, co je opravdu společné:
 
 ## Důsledky
 
-Dva lidé mohou pracovat současně a útrata sedí na tom, kdo ji spotřeboval,
-protože každý jede na svém předplatném. `/login` proběhne jednou na
+Dva lidé mohou pracovat současně a každý jede na svém předplatném.
+`/login` proběhne jednou na
 člověka, ne při každém spuštění — což je podstatné, protože je to
 interaktivní OAuth a VPS je headless.
 

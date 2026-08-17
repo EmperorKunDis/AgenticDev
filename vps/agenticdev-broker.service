@@ -11,7 +11,9 @@ EnvironmentFile=/srv/agenticdev/config/.env
 ExecStart=/usr/local/lib/agenticdev/broker.py
 NoNewPrivileges=true
 PrivateTmp=true
-ProtectHome=true
+# Provider CLIs own ~/.claude and ~/.codex. The broker only validates and
+# bind-mounts the selected store; it must never mutate user credentials.
+ProtectHome=read-only
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true

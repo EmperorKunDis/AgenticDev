@@ -299,15 +299,15 @@ class Broker:
   os.chown(wo,uid,gid);os.chown(tok,uid,gid)
   provider=m["runtime"]["provider"]
   credentials=Path(account.pw_dir)/(".claude" if provider=="claude" else ".codex")
-  credentials.mkdir(mode=0o700,exist_ok=True)
-  if credentials.is_symlink() or Path(account.pw_dir).resolve() not in credentials.resolve().parents:raise Reject("credential_identity_mismatch")
-  os.chown(credentials,uid,gid);os.chmod(credentials,0o700)
+  if credentials.is_symlink() or not credentials.is_dir() or Path(account.pw_dir).resolve() not in credentials.resolve().parents:raise Reject("credential_identity_mismatch")
+  credential_stat=credentials.stat()
+  if credential_stat.st_uid!=uid or credential_stat.st_gid!=gid or credential_stat.st_mode & 0o077:raise Reject("credential_permissions_invalid")
   wid=m["work_order_id"]; net="ad-"+wid; name="agenticdev-"+wid; egress="egress-"+wid
   live=(authorization or {}).get("egress_allowlist")
   if not isinstance(live,list) or not live:raise Reject("live_egress_policy_missing")
   allow=','.join(live)
   cred_dst="/home/node/.claude" if provider=="claude" else "/home/node/.codex"
-  pod=["docker","run","-d","--name",name,"--user",f"{uid}:{gid}","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--pids-limit",str(l.pids),"--cpus",l.cpus,"--memory",f"{l.memory_mb}m","--memory-swap",f"{l.memory_mb}m","--storage-opt",f"size={l.disk_mb}M","--network",net,"--env","HTTP_PROXY=http://egress:8888","--env","HTTPS_PROXY=http://egress:8888","--env","NO_PROXY=localhost,127.0.0.1","--mount",f"type=bind,src={credentials},dst={cred_dst}","--tmpfs","/tmp:rw,noexec,nosuid,size=64m","--tmpfs",f"/run/agenticdev:rw,noexec,nosuid,size=8m,mode=0700,uid={uid},gid={gid}","--mount",f"type=bind,src={work},dst=/workspace,readonly","--entrypoint","sleep","agenticdev/pod:installed","infinity"]
+  pod=["docker","run","-d","--name",name,"--user",f"{uid}:{gid}","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--pids-limit",str(l.pids),"--cpus",l.cpus,"--memory",f"{l.memory_mb}m","--memory-swap",f"{l.memory_mb}m","--storage-opt",f"size={l.disk_mb}M","--network",net,"--env","HOME=/home/node","--env","HTTP_PROXY=http://egress:8888","--env","HTTPS_PROXY=http://egress:8888","--env","NO_PROXY=localhost,127.0.0.1","--mount",f"type=bind,src={credentials},dst={cred_dst}","--tmpfs","/tmp:rw,noexec,nosuid,size=64m","--tmpfs",f"/run/agenticdev:rw,noexec,nosuid,size=8m,mode=0700,uid={uid},gid={gid}","--mount",f"type=bind,src={work},dst=/workspace,readonly","--entrypoint","sleep","agenticdev/pod:installed","infinity"]
   for scope in m["repo"].get("write_scope",[]):
    top=scope.split('/',1)[0]; pod[-4:-4]=["--mount",f"type=bind,src={work/top},dst=/workspace/{top}"]
   pod[-4:-4]=["--mount",f"type=bind,src={work/'.git'},dst=/workspace/.git","--mount",f"type=bind,src={work/'.agenticdev'},dst=/workspace/.agenticdev","--mount",f"type=bind,src={work/'.agenticdev-trees'},dst=/trees"]
@@ -315,7 +315,7 @@ class Broker:
   if m["runtime"]["mode"]=="analysis":
    output=run/"analysis-output";output.mkdir(mode=0o700);os.chown(output,uid,gid)
    pod[-4:-4]=["--mount",f"type=bind,src={output},dst=/analysis-output"]
-  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--user","100:101","--network",net,"--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
+  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--user","100:101","--network",net,"--network-alias","egress","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
  def attach_stream(self,wid,token,user,conn):
   w=self._owned(wid,token,user); m=w["manifest"]
   if w["state"]!="RUNNING":raise Reject("workload_not_running")

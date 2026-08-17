@@ -84,9 +84,11 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('SELECT p.id,pr.id FROM project p CROSS JOIN principal pr',migration)
   self.assertIn('loginctl terminate-user "$login"',install);self.assertIn('loginctl terminate-user "$LOGIN"',ctl)
  def test_control_plane_supplies_live_egress_and_creates_pull_request(self):
-  cp=(ROOT/'control-plane/app/main.py').read_text();broker=(ROOT/'vps/broker.py').read_text()
+  cp=(ROOT/'control-plane/app/main.py').read_text();broker=(ROOT/'vps/broker.py').read_text();install=(ROOT/'install-vps.sh').read_text()
   self.assertIn('/v1/broker/pull-request',cp);self.assertIn('/v1/broker/pull-request',broker)
   self.assertIn('egress_allowlist":sorted(live)',cp);self.assertIn('live_egress_policy_missing',broker)
+  self.assertIn('"codex":{"chatgpt.com"}',cp);self.assertIn('"claude":{"api.anthropic.com"}',cp)
+  self.assertIn('chatgpt.com,api.anthropic.com,registry.npmjs.org',install)
   self.assertIn('"control_plane": CONTROL_PLANE_URL',cp);self.assertIn('CONTROL_PLANE_URL.rstrip("/") + "/v1/events"',cp)
  def test_socket_server_is_bounded(self):
   s=(ROOT/'vps/broker.py').read_text();self.assertIn('ThreadPoolExecutor(max_workers=16',s);self.assertIn('BoundedSemaphore(32)',s);self.assertNotIn('threading.Thread(target=worker',s)

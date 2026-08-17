@@ -32,7 +32,6 @@ CREATE TABLE project (
   data_class  data_class NOT NULL DEFAULT 'internal',
   -- politika: jaké modely smí projekt použít; NULL = globální default
   model_allowlist  text[],
-  budget_czk_month numeric(10,2) DEFAULT 5000,
   director_overrides jsonb NOT NULL DEFAULT '{}'::jsonb,
   active      boolean NOT NULL DEFAULT true,
   created_at  timestamptz NOT NULL DEFAULT now()
@@ -56,7 +55,6 @@ CREATE TABLE task (
   dod         jsonb NOT NULL DEFAULT '[]'::jsonb,
   write_scope text[] NOT NULL DEFAULT '{}',
   risk        risk_class NOT NULL DEFAULT 'standard',
-  budget_czk  numeric(10,2) NOT NULL DEFAULT 300,
   state       task_state NOT NULL DEFAULT 'backlog',
   priority    int NOT NULL DEFAULT 100,
   created_at  timestamptz NOT NULL DEFAULT now()
@@ -107,7 +105,6 @@ CREATE TABLE director_version (
   sha256           text NOT NULL,
   signature        text,
   eval_pass_rate   numeric(4,3),
-  eval_cost_czk    numeric(10,2),
   released_at      timestamptz NOT NULL DEFAULT now(),
   UNIQUE (director_id, semver)
 );
@@ -168,13 +165,27 @@ CREATE TABLE agent_run (
   input_hash     text,
   tokens_in      int NOT NULL DEFAULT 0,
   tokens_out     int NOT NULL DEFAULT 0,
-  cost_czk       numeric(10,4) NOT NULL DEFAULT 0,
   duration_ms    int,
   outcome        text,
   transcript_uri text,
   created_at     timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX ON agent_run (task_id, created_at);
+
+CREATE TABLE github_identity (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  principal_id uuid REFERENCES principal(id) ON DELETE CASCADE,
+  github_user_id text NOT NULL UNIQUE,
+  github_login text NOT NULL,
+  display_name text,
+  avatar_url text,
+  token_encrypted text NOT NULL,
+  scopes text[] NOT NULL DEFAULT '{}',
+  is_default boolean NOT NULL DEFAULT false,
+  last_verified_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE UNIQUE INDEX github_identity_one_default ON github_identity(is_default) WHERE is_default;
 
 CREATE TABLE artifact (
   id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),

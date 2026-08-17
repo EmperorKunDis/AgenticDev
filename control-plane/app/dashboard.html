@@ -123,7 +123,7 @@
       <div class="panel stat"><div class="n" id="sReady">–</div><div class="l">čeká na práci</div></div>
       <div class="panel stat"><div class="n" id="sRun">–</div><div class="l">běží teď</div></div>
       <div class="panel stat"><div class="n" id="sBlock">–</div><div class="l">čeká na tebe</div></div>
-      <div class="panel stat"><div class="n" id="sCost">–</div><div class="l" id="sCostLabel">útrata dnes</div></div>
+      <div class="panel stat"><div class="n" id="sCost">–</div><div class="l" id="sCostLabel">běhů agenta</div></div>
     </div>
 
     <h2>Kdo právě pracuje</h2>
@@ -166,7 +166,6 @@
       <textarea id="tDod" rows="4" placeholder="unit testy pokrývají mapování polí&#10;integrační test proti fixture DE exportu&#10;ADR pro volbu parseru"></textarea>
       <p class="hint">Bez DoD úkol nezaložím. Agent by neměl jak poznat, že skončil.</p>
       <div class="grid g2">
-        <div><label>Rozpočet (Kč)</label><input id="tBudget" type="number" value="300"></div>
         <div><label>Riziko</label>
           <select id="tRisk">
             <option value="low">low — bez lidské brány</option>
@@ -204,7 +203,6 @@
             <option value="restricted">restricted — JEN lokální model</option>
           </select>
           <p class="hint">restricted natvrdo zakáže cloudové modely. Pro zdravotnictví a osobní údaje.</p></div>
-        <div><label>Měsíční rozpočet (Kč)</label><input id="pBudget" type="number" value="5000"></div>
       </div>
       <label>Existující repozitář — nepovinné</label>
       <input id="pImport" placeholder="https://github.com/agenticdev/montexbau.git" class="mono">
@@ -254,6 +252,17 @@
       Hesla se zobrazují zamaskovaná — pole nech být, pokud ho neměníš.</p>
     </div>
     <div id="setForm"></div>
+
+    <h2>GitHub účty / GitHub accounts</h2>
+    <div class="panel">
+      <p class="hint">Připojené identity jsou dostupné platformě. Token zůstává šifrovaný na VPS a neposílá se do prohlížeče ani agentního podu. / Tokens stay encrypted on the VPS.</p>
+      <div id="githubAccounts"></div>
+      <div class="row" style="margin-top:14px"><button onclick="connectGitHub()">Připojit GitHub / Connect</button></div>
+      <div id="githubDevice" style="margin-top:12px"></div>
+    </div>
+
+    <h2>Agentní vývojové prostředí / Agent environment</h2>
+    <div id="devInventory"></div>
 
     <h2>Jen ke čtení</h2>
     <div class="panel">
@@ -323,15 +332,8 @@ async function loadBoard(){
   $('#sReady').textContent  = c.ready||0;
   $('#sRun').textContent    = (c.assigned||0)+(c.running||0);
   $('#sBlock').textContent  = b.pending_decisions.length;
-  // Nula by se čtla jako „nic to nestálo". Dokud tokeny nikdo neohlašuje,
-  // říkáme rovnou, že se to neměří, a místo ceny ukážeme počet běhů.
-  if (b.spend_measured) {
-    $('#sCost').textContent = czk(b.spend_today_czk);
-    $('#sCostLabel').textContent = 'útrata dnes';
-  } else {
-    $('#sCost').textContent = b.runs_total ?? 0;
-    $('#sCostLabel').innerHTML = 'běhů agenta <span class="dim">(útrata se neměří)</span>';
-  }
+  $('#sCost').textContent = b.runs_total ?? 0;
+  $('#sCostLabel').textContent = 'běhů agenta';
 
   const n = b.pending_decisions.length;
   $('#decBadge').innerHTML = n ? `<span class="tag hot">${n}</span>` : '';
@@ -382,12 +384,11 @@ async function resolve(id, approve){
 async function loadTasks(){
   const [ts, ps] = await Promise.all([api('/v1/tasks'), api('/v1/projects')]);
   $('#tProject').innerHTML = ps.map(p=>`<option value="${esc(p.code)}">${esc(p.code)} — ${esc(p.client_name||'')}</option>`).join('');
-  $('#tasks').innerHTML = ts.length ? `<table><tr><th>Stav</th><th>Projekt</th><th>Úkol</th><th>Kdo</th><th>Rozpočet</th></tr>` +
+  $('#tasks').innerHTML = ts.length ? `<table><tr><th>Stav</th><th>Projekt</th><th>Úkol</th><th>Kdo</th></tr>` +
     ts.map(t=>`<tr onclick="timeline('${esc(t.id)}')" style="cursor:pointer">
       <td><span class="tag ${t.state==='blocked'?'hot':t.state==='done'?'ok':''}">${esc(t.state)}</span></td>
       <td class="mono">${esc(t.project)}</td><td>${esc(t.title)}</td>
       <td class="dim">${esc(t.assignee||'–')}</td>
-      <td class="mono ${+t.spent_czk > +t.budget_czk ? 'tag hot':''}">${czk(t.spent_czk)} / ${czk(t.budget_czk)}</td>
     </tr>`).join('') + `</table>` : `<div class="empty">Zatím žádné úkoly.</div>`;
 }
 
@@ -418,10 +419,6 @@ async function timeline(id){
 
   // Nula u ceny neznamená „nic to nestálo" — znamená „nikdo to nezměřil".
   // Tvrdit z ní útratu by bylo horší než nemít údaj vůbec.
-  const cost = d.totals.cost_measured
-    ? czk(d.totals.cost_czk)
-    : `<span class="dim">neměří se</span>`;
-
   el.innerHTML = `
     <div class="panel">
       <div class="row" style="justify-content:space-between;align-items:baseline">
@@ -430,11 +427,8 @@ async function timeline(id){
       </div>
       <p class="dim mono" style="margin:6px 0 14px">
         ${esc(d.task.project)} · fáze ${esc(d.task.phase)} ·
-        běhů ${d.totals.runs} · čas ${dur(d.totals.duration_ms)} · útrata ${cost}
+        běhů ${d.totals.runs} · čas ${dur(d.totals.duration_ms)}
       </p>
-      ${!d.totals.cost_measured && d.totals.runs
-        ? `<p class="hint">Tokeny a cenu dnes nikdo neohlašuje — Pi je nevydává.
-             Zapisuje se model, doba běhu, výsledek a transkript.</p>` : ''}
       ${rows.length ? `<table><tr><th>Kdy</th><th>Co</th><th>Stalo se</th><th>Podrobnost</th></tr>` +
         rows.map(r=>`<tr>
           <td class="dim mono" style="width:150px;white-space:nowrap">${esc(at(r.ts))}</td>
@@ -451,7 +445,7 @@ async function newTask(){
   try {
     await api('/v1/tasks', {method:'POST', body: JSON.stringify({
       project: $('#tProject').value, title: $('#tTitle').value.trim(), kind: $('#tKind').value,
-      dod, risk: $('#tRisk').value, budget_czk: +$('#tBudget').value })});
+      dod, risk: $('#tRisk').value })});
     $('#tTitle').value=''; $('#tDod').value=''; $('#taskErr').innerHTML='';
     loadTasks();
   } catch(e){ showErr('#taskErr', e.message); }
@@ -462,15 +456,14 @@ const PHASES = ['discovery','design','implementation','hardening','delivery','su
 
 async function loadProjects(){
   const ps = await api('/v1/projects');
-  $('#projects').innerHTML = ps.length ? `<table><tr><th>Kód</th><th>Klient</th><th>Fáze</th><th>Data</th><th>Úkolů</th><th>Útrata / měsíc</th></tr>` +
+  $('#projects').innerHTML = ps.length ? `<table><tr><th>Kód</th><th>Klient</th><th>Fáze</th><th>Data</th><th>Úkolů</th></tr>` +
     ps.map(p=>`<tr><td class="mono">${esc(p.code)}</td><td>${esc(p.client_name||'')}</td>
       <td><select class="sm" onchange="setPhase('${esc(p.code)}',this.value)"
                   style="width:auto;padding:4px 8px;font-size:13px">
         ${PHASES.map(f=>`<option ${p.phase===f?'selected':''}>${f}</option>`).join('')}
       </select></td>
       <td><span class="tag ${p.data_class==='restricted'?'hot':''}">${esc(p.data_class)}</span></td>
-      <td class="mono">${p.task_count}</td>
-      <td class="mono">${czk(p.spent_czk)} / ${czk(p.budget_czk_month)}</td></tr>`).join('') + `</table>`
+      <td class="mono">${p.task_count}</td></tr>`).join('') + `</table>`
     : `<div class="empty">Založ první projekt.</div>`;
 }
 
@@ -487,7 +480,7 @@ async function newProject(){
   try {
     const r = await api('/v1/projects', {method:'POST', body: JSON.stringify({
       code: $('#pCode').value.trim(), client_name: $('#pClient').value.trim(),
-      data_class: $('#pClass').value, budget_czk_month: +$('#pBudget').value,
+      data_class: $('#pClass').value,
       import_url: $('#pImport').value.trim() || null })});
     $('#projErr').innerHTML = `<div class="err" style="border-color:var(--ok);color:var(--ok)">
       Založeno. ${esc(r.next)}</div>`;
@@ -550,7 +543,8 @@ async function kill(enabled){
 let SET = null;
 
 async function loadSettings(){
-  SET = await api('/v1/settings');
+  const [settings, dev] = await Promise.all([api('/v1/settings'), api('/v1/developer-settings')]);
+  SET = settings;
   const byGroup = {};
   SET.fields.forEach(f => (byGroup[f.group] ||= []).push(f));
 
@@ -590,6 +584,40 @@ async function loadSettings(){
        <code style="min-width:190px;opacity:.6">${esc(k)}</code>
        <span>${esc(v) || '<span class="hint">—</span>'}</span>
      </div>`).join('');
+
+  const ids = dev.github.identities || [];
+  $('#githubAccounts').innerHTML = ids.length ? `<table><tr><th>Účet</th><th>Oprávnění</th><th>Ověřeno</th><th></th></tr>` +
+    ids.map(x=>`<tr><td><strong>@${esc(x.github_login)}</strong> ${x.is_default?'<span class="tag ok">výchozí / default</span>':''}<br><span class="dim">${esc(x.display_name||'')}</span></td>
+      <td class="mono dim">${esc((x.scopes||[]).join(', '))}</td><td class="dim">${ago(x.last_verified_at)}</td>
+      <td><button class="ghost sm" onclick="defaultGitHub('${x.id}')">Výchozí</button> <button class="ghost sm" onclick="disconnectGitHub('${x.id}')">Odpojit</button></td></tr>`).join('') + `</table>`
+    : `<div class="empty">Žádný GitHub účet není připojený. / No GitHub account connected.</div>`;
+  if (!dev.github.configured) $('#githubDevice').innerHTML = `<div class="err">Na VPS chybí GITHUB_CLIENT_ID. Vytvoř GitHub OAuth App se zapnutým Device Flow a přidej Client ID do serverového .env.</div>`;
+
+  const inv = dev.inventory;
+  const list = (title, values) => `<div class="panel"><strong>${esc(title)}</strong><div style="margin-top:8px">${values.length ? values.map(v=>`<div class="mono" style="padding:3px 0">${esc(typeof v==='string'?v:(v.role+'@'+v.semver+' — '+v.prompt_ref))}</div>`).join('') : '<span class="dim">—</span>'}</div></div>`;
+  $('#devInventory').innerHTML = list('Agenti / Agents', inv.agents||[]) + list('Skilly / Skills', inv.skills||[]) + list('Hooky / Hooks', inv.hooks||[]) + list('Skripty / Scripts', inv.scripts||[]) + list('Instrukce a nastavení / Instructions & settings', inv.instructions||[]);
+}
+
+async function connectGitHub(){
+  try {
+    const d = await api('/v1/github/device/start',{method:'POST'});
+    $('#githubDevice').innerHTML = `<div class="panel"><p>Otevři / Open <a href="${esc(d.verification_uri)}" target="_blank" rel="noopener">${esc(d.verification_uri)}</a></p><p style="font-size:28px;margin:8px 0" class="mono">${esc(d.user_code)}</p><p class="hint">Čekám na potvrzení… / Waiting for authorization…</p></div>`;
+    let delay = Math.max(5, d.interval||5) * 1000;
+    const poll = async()=>{
+      try {
+        const r = await api('/v1/github/device/poll',{method:'POST',body:JSON.stringify({device_code:d.device_code})});
+        if(r.state==='ready'){ $('#githubDevice').innerHTML=''; loadSettings(); return; }
+        if(r.slow_down) delay += 5000;
+        setTimeout(poll, delay);
+      } catch(e){ showErr('#githubDevice', e.message); }
+    };
+    setTimeout(poll, delay);
+  } catch(e){ showErr('#githubDevice', e.message); }
+}
+async function defaultGitHub(id){ await api(`/v1/github/identities/${id}/default`,{method:'POST'}); loadSettings(); }
+async function disconnectGitHub(id){
+  if(!confirm('Odpojit GitHub účet? / Disconnect GitHub account?')) return;
+  await api(`/v1/github/identities/${id}`,{method:'DELETE'}); loadSettings();
 }
 
 async function saveSettings(){

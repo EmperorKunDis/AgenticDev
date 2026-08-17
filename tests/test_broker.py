@@ -11,10 +11,12 @@ P='11111111-1111-4111-8111-111111111111'; W='22222222-2222-4222-8222-22222222222
 class Boundary(unittest.TestCase):
  def setUp(self):
   self.tmp=tempfile.TemporaryDirectory(); self.root=Path(self.tmp.name); (self.root/'workloads').mkdir(); (self.root/'repos').mkdir(); (self.root/'home').mkdir()
+  (self.root/'home'/'.claude').mkdir(mode=0o700); (self.root/'home'/'.codex').mkdir(mode=0o700)
   self.env=mock.patch.dict(os.environ,{'AGENTICDEV_WORK_ROOT':str(self.root/'workloads'),'AGENTICDEV_REPO_ROOT':str(self.root/'repos'),'AGENTICDEV_BROKER_STATE':str(self.root/'state'),'AGENTICDEV_IDENTITY_ROOT':str(self.root/'identities')}); self.env.start()
   self.chown_patcher=mock.patch.object(mod.os,'chown'); self.chown=self.chown_patcher.start()
   self.private=Ed25519PrivateKey.generate(); public=self.private.public_key().public_bytes(serialization.Encoding.Raw,serialization.PublicFormat.Raw); self.plans=[]
-  self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':1000,'pw_gid':1000,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}
+  self.uid,self.gid=os.getuid(),os.getgid()
+  self.b=mod.Broker(public,'instance','http://invalid','secret',mod.StateStore(self.root/'replay.db'),self.root/'audit.jsonl',runner=self.plans.append,clock=lambda:2_000_000_000,git_runner=self.fake_git,quota_runner=lambda *x:None,account_lookup=lambda u:type('A',(),{'pw_uid':self.uid,'pw_gid':self.gid,'pw_dir':str(self.root/'home')})()); self.b._post=self.authorize; self.b._get=lambda path,token:{'project':{'code':'alpha','phase':'implementation'},'files':{}}
  def fake_git(self,cmd):
   if 'clone' not in cmd:return
   target=Path(cmd[-1]); target.mkdir(parents=True,exist_ok=True)
@@ -85,7 +87,8 @@ class Boundary(unittest.TestCase):
  def test_runtime_hardening_limits_mount_and_proxy(self):
   self.assertTrue(self.call(self.manifest())['ok']); plan=self.plans[0];flat='\n'.join(' '.join(c) for c in plan)
   pod=plan[-1];entry=pod.index('--entrypoint');self.assertEqual(pod[entry:entry+3],['--entrypoint','sleep','agenticdev/pod:installed'])
-  for x in ('--user 1000:1000','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HTTP_PROXY=http://egress:8888','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
+  for x in (f'--user {self.uid}:{self.gid}','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HOME=/home/node','HTTP_PROXY=http://egress:8888','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
+  self.assertIn('--network-alias egress',flat)
   for x in ('/srv/agenticdev/config','/etc','/var/run/docker.sock','--privileged','--pid=host','--network=host'): self.assertNotIn(x,flat)
   self.assertNotIn('docker cp',flat);self.assertNotIn('docker exec --user 0',flat)
  def plan_text(self):
@@ -175,5 +178,7 @@ class Installed(unittest.TestCase):
   for forbidden in ('image','mounts','host_path','command','environment','network','docker_flags'): self.assertNotIn('"'+forbidden+'"',client)
  def test_socket_is_narrow_not_runtime_socket(self):
   service=(ROOT/'vps/agenticdev-broker.service').read_text(); self.assertIn('User=root',service); self.assertIn('Group=agenticdev-broker',service); self.assertNotIn('docker.sock',service)
+  self.assertIn('ProtectHome=read-only',service)
+  self.assertNotIn('ProtectHome=true',service)
   installer=(ROOT/'install-vps.sh').read_text(); self.assertIn('chmod 0660 /var/run/docker.sock',installer); self.assertIn('chmod 0600 /run/containerd/containerd.sock',installer)
 if __name__=='__main__': unittest.main()

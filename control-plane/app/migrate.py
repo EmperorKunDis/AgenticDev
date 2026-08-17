@@ -182,6 +182,30 @@ STEPS: list[tuple[str, str]] = [
           ON CONFLICT (project_id,principal_id) DO NOTHING
         """,
     ),
+    (
+        "subscription režim a GitHub identity",
+        """
+        ALTER TABLE project DROP COLUMN IF EXISTS budget_czk_month;
+        ALTER TABLE task DROP COLUMN IF EXISTS budget_czk;
+        ALTER TABLE IF EXISTS evaluation DROP COLUMN IF EXISTS eval_cost_czk;
+        ALTER TABLE agent_run DROP COLUMN IF EXISTS cost_czk;
+        CREATE TABLE IF NOT EXISTS github_identity (
+          id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+          principal_id uuid REFERENCES principal(id) ON DELETE CASCADE,
+          github_user_id text NOT NULL UNIQUE,
+          github_login text NOT NULL,
+          display_name text,
+          avatar_url text,
+          token_encrypted text NOT NULL,
+          scopes text[] NOT NULL DEFAULT '{}',
+          is_default boolean NOT NULL DEFAULT false,
+          last_verified_at timestamptz,
+          created_at timestamptz NOT NULL DEFAULT now()
+        );
+        CREATE UNIQUE INDEX IF NOT EXISTS github_identity_one_default
+          ON github_identity(is_default) WHERE is_default;
+        """,
+    ),
 ]
 
 
