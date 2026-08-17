@@ -11,10 +11,9 @@ EnvironmentFile=/srv/agenticdev/config/.env
 ExecStart=/usr/local/lib/agenticdev/broker.py
 NoNewPrivileges=true
 PrivateTmp=true
-# The broker validates and bind-mounts each Unix user's isolated provider
-# credentials from ~/.claude or ~/.codex. Hiding /home makes every workload
-# fail before Docker starts, regardless of a valid provider login.
-ProtectHome=false
+# Provider CLIs own ~/.claude and ~/.codex. The broker only validates and
+# bind-mounts the selected store; it must never mutate user credentials.
+ProtectHome=read-only
 ProtectSystem=strict
 ProtectKernelTunables=true
 ProtectKernelModules=true

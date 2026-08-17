@@ -299,9 +299,9 @@ class Broker:
   os.chown(wo,uid,gid);os.chown(tok,uid,gid)
   provider=m["runtime"]["provider"]
   credentials=Path(account.pw_dir)/(".claude" if provider=="claude" else ".codex")
-  credentials.mkdir(mode=0o700,exist_ok=True)
-  if credentials.is_symlink() or Path(account.pw_dir).resolve() not in credentials.resolve().parents:raise Reject("credential_identity_mismatch")
-  os.chown(credentials,uid,gid);os.chmod(credentials,0o700)
+  if credentials.is_symlink() or not credentials.is_dir() or Path(account.pw_dir).resolve() not in credentials.resolve().parents:raise Reject("credential_identity_mismatch")
+  credential_stat=credentials.stat()
+  if credential_stat.st_uid!=uid or credential_stat.st_gid!=gid or credential_stat.st_mode & 0o077:raise Reject("credential_permissions_invalid")
   wid=m["work_order_id"]; net="ad-"+wid; name="agenticdev-"+wid; egress="egress-"+wid
   live=(authorization or {}).get("egress_allowlist")
   if not isinstance(live,list) or not live:raise Reject("live_egress_policy_missing")
