@@ -1,6 +1,6 @@
 fastapi==0.141.*
 uvicorn[standard]==0.52.*
-psycopg[binary]==3.2.*
+psycopg[binary]==3.3.*
 pydantic==2.*
 PyJWT==2.*
 cryptography==50.*
