@@ -84,6 +84,10 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn("e.verb='broker_start_failed'",main)
   self.assertIn("UPDATE task SET state='ready'",main)
   self.assertIn('body.get("verb") == "start_failed"',main)
+ def test_provider_auth_failure_retries_only_the_callers_assignment(self):
+  main=(ROOT/'control-plane/app/main.py').read_text();launcher=(ROOT/'launcher/agenticdev').read_text()
+  self.assertIn('"retry": "ready"',main);self.assertIn('owned.workstation_id=%s',main)
+  self.assertIn('AUTH_REQUIRED" || "$outcome" == "RATE_LIMITED',launcher)
  def test_upgrade_backfills_membership_and_terminates_stale_sessions(self):
   migration=(ROOT/'control-plane/app/migrate.py').read_text();install=(ROOT/'install-vps.sh').read_text();ctl=(ROOT/'vps/agenticdev-ctl').read_text()
   self.assertIn('SELECT p.id,pr.id FROM project p CROSS JOIN principal pr',migration)
@@ -133,7 +137,7 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('@anthropic-ai/claude-code @openai/codex',docker);self.assertNotIn('pi-coding-agent',docker)
   self.assertIn('from providers import command',harness);self.assertNotIn('shutil.which("pi")',harness)
   self.assertIn('provider_denied',broker);self.assertIn('/home/node/.claude',broker);self.assertIn('/home/node/.codex',broker)
-  self.assertIn('claude auth status',launcher);self.assertIn('codex login status',launcher)
+  self.assertIn('provider_probe claude',launcher);self.assertIn('provider_probe codex',launcher)
  def test_repository_analysis_is_versioned_cited_and_gates_work_orders(self):
   migrate=(ROOT/'control-plane/app/migrate.py').read_text();repo=(ROOT/'control-plane/app/repository.py').read_text();main=(ROOT/'control-plane/app/main.py').read_text()
   self.assertIn('CREATE TABLE IF NOT EXISTS provider_profile',migrate)

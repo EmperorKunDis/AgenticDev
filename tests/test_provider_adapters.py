@@ -15,6 +15,7 @@ analysis=importlib.util.module_from_spec(analysis_spec);analysis_spec.loader.exe
 class ProviderAdapters(unittest.TestCase):
  def test_auth_and_quota_failures_are_recoverable_states(self):
   self.assertEqual(mod.classify_failure("Please login to continue",1),"AUTH_REQUIRED")
+  self.assertEqual(mod.classify_failure("OAuth access token has been revoked",1),"AUTH_REQUIRED")
   self.assertEqual(mod.classify_failure("usage limit reached",1),"RATE_LIMITED")
   self.assertEqual(mod.classify_failure("unexpected",1),"FAILED")
  def test_analysis_cli_is_read_only_and_ignores_project_rules(self):
@@ -33,6 +34,8 @@ class ProviderAdapters(unittest.TestCase):
   launcher=(ROOT/"launcher/agenticdev").read_text()
   self.assertIn("codex login --device-auth",launcher)
   self.assertNotIn("|| codex login\n",launcher)
+  self.assertIn("provider_probe claude",launcher);self.assertIn("provider_probe codex",launcher)
+  self.assertLess(launcher.index("provider_probe claude"),launcher.index('/v1/provider-profile'))
  def test_analysis_parses_stdout_without_cli_diagnostics(self):
   result=mock.Mock(returncode=0,stdout='{"result":true}',stderr='Codex diagnostic\n')
   with mock.patch.object(analysis,"command",return_value=["codex"]),mock.patch.object(analysis.subprocess,"run",return_value=result):

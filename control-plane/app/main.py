@@ -489,12 +489,16 @@ def heartbeat(wo_id: str, ws: dict = Depends(current_ws)):
 
 @app.post("/v1/work-orders/{wo_id}/release")
 def release(wo_id: str, outcome: str = "done", ws: dict = Depends(current_ws)):
-    final = {"done": "review", "aborted": "aborted", "blocked": "blocked"}.get(outcome, "review")
+    final = {"done": "review", "aborted": "aborted", "blocked": "blocked",
+             "retry": "ready"}.get(outcome, "review")
     with db() as c:
         a = c.execute(
             """UPDATE assignment SET state = 'released'
-               WHERE id = (SELECT assignment_id FROM work_order WHERE id = %s)
-               RETURNING task_id""", (wo_id,),
+               WHERE id = (SELECT wo.assignment_id FROM work_order wo
+                            JOIN assignment owned ON owned.id=wo.assignment_id
+                            WHERE wo.id=%s AND owned.workstation_id=%s)
+                 AND state='active'
+               RETURNING task_id""", (wo_id, ws["id"]),
         ).fetchone()
         if a:
             c.execute("UPDATE task SET state = %s WHERE id = %s", (final, a["task_id"]))

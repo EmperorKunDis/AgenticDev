@@ -5,7 +5,8 @@ import shutil
 
 
 AUTH_MARKERS = ("not logged in", "login required", "authentication required", "unauthorized",
-                "please run /login", "please login")
+                "please run /login", "please login", "failed to authenticate",
+                "oauth access token has been revoked")
 RATE_MARKERS = ("rate limit", "rate_limit", "usage limit", "quota", "too many requests")
 
 
