@@ -36,13 +36,13 @@
   /* ── Layout ── */
   header{border-bottom:1px solid var(--line);background:var(--panel);
          position:sticky;top:0;z-index:10}
-  .bar{max-width:1180px;margin:0 auto;padding:0 24px;display:flex;
+  .bar{max-width:1440px;margin:0 auto;padding:0 24px;display:flex;
        align-items:center;gap:28px;height:56px}
   .logo{font-size:12px;letter-spacing:.22em;text-transform:uppercase;font-weight:600}
   nav{display:flex;gap:2px;margin-left:auto}
   nav a{padding:8px 14px;font-size:14px;color:var(--ink-2);text-decoration:none;cursor:pointer}
   nav a.on{color:var(--ink);box-shadow:inset 0 -2px 0 var(--ink)}
-  main{max-width:1180px;margin:0 auto;padding:32px 24px 80px}
+  main{max-width:1440px;margin:0 auto;padding:32px 24px 80px}
   section{display:none} section.on{display:block}
   h2{font-size:12px;letter-spacing:.18em;text-transform:uppercase;color:var(--ink-3);
      font-weight:600;margin:0 0 14px}
@@ -53,9 +53,37 @@
   .grid{display:grid;gap:12px}
   .g4{grid-template-columns:repeat(4,1fr)}
   .g2{grid-template-columns:1fr 1fr}
-  @media(max-width:820px){.g4{grid-template-columns:1fr 1fr}.g2{grid-template-columns:1fr}}
   .stat .n{font-family:var(--mono);font-size:30px;font-weight:500;letter-spacing:-.02em}
   .stat .l{font-size:12px;color:var(--ink-3);letter-spacing:.08em;text-transform:uppercase;margin-top:2px}
+  .dashboard-layout{display:grid;grid-template-columns:minmax(0,1fr) 280px;gap:24px;align-items:start}
+  .rail{position:sticky;top:80px}
+  .rail-title{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
+  .indicator{display:flex;align-items:center;justify-content:space-between;padding:10px 0;
+             border-bottom:1px solid var(--line);cursor:pointer}
+  .indicator:last-child{border-bottom:0}.indicator:hover .indicator-label{color:var(--ink)}
+  .indicator-value{font:600 17px var(--mono)}
+  .indicator-label{color:var(--ink-2);font-size:13px}
+  .subnav{display:flex;gap:6px;flex-wrap:wrap;margin:0 0 18px;border-bottom:1px solid var(--line)}
+  .subnav button{background:transparent;color:var(--ink-2);border:0;padding:9px 11px;
+                 border-bottom:2px solid transparent;margin-bottom:-1px}
+  .subnav button.on{color:var(--ink);border-bottom-color:var(--ink)}
+  .subpane{display:none}.subpane.on{display:block}
+  .inventory-layout{display:grid;grid-template-columns:minmax(260px,34%) minmax(0,1fr);gap:12px}
+  .inventory-list{max-height:640px;overflow:auto;border:1px solid var(--line);background:var(--panel)}
+  .inventory-item{display:block;width:100%;padding:10px 12px;border:0;border-bottom:1px solid var(--line);
+                  background:transparent;color:var(--ink);text-align:left;overflow:hidden}
+  .inventory-item:hover,.inventory-item.on{background:#f2f0ed;opacity:1}
+  .inventory-item .path{display:block;font:12px var(--mono);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .inventory-item .meta{font-size:11px;color:var(--ink-3);margin-top:3px}
+  .file-view{margin:0;min-height:420px;max-height:640px;white-space:pre;overflow:auto}
+  .file-head{display:flex;gap:12px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
+  .count-card{cursor:pointer}.count-card:hover{border-color:var(--ink-3)}
+  .settings-shell{display:grid;grid-template-columns:210px minmax(0,1fr);gap:24px}
+  .settings-nav{display:flex;flex-direction:column;gap:2px;position:sticky;top:80px;align-self:start}
+  .settings-nav button{text-align:left;background:transparent;color:var(--ink-2);border:0;padding:9px 10px}
+  .settings-nav button.on{background:var(--ink);color:#fff}
+  @media(max-width:820px){.g4{grid-template-columns:1fr 1fr}.g2{grid-template-columns:1fr}
+    .dashboard-layout,.inventory-layout,.settings-shell{grid-template-columns:1fr}.rail,.settings-nav{position:static}}
 
   table{width:100%;border-collapse:collapse;background:var(--panel);border:1px solid var(--line)}
   th{text-align:left;font-size:11px;letter-spacing:.1em;text-transform:uppercase;
@@ -105,10 +133,10 @@
   <span class="logo">AgenticDev</span>
   <nav>
     <a data-t="prehled" class="on" onclick="tab('prehled')">Přehled</a>
-    <a data-t="rozhodnuti" onclick="tab('rozhodnuti')">Rozhodnutí <span id="decBadge"></span></a>
-    <a data-t="ukoly" onclick="tab('ukoly')">Úkoly</a>
+    <a data-t="prace" onclick="tab('prace')">Práce <span id="decBadge"></span></a>
     <a data-t="projekty" onclick="tab('projekty')">Projekty</a>
     <a data-t="tym" onclick="tab('tym')">Tým</a>
+    <a data-t="prostredi" onclick="tab('prostredi')">Prostředí</a>
     <a data-t="nastaveni" onclick="tab('nastaveni')">Nastavení</a>
   </nav>
 </div></header>
@@ -118,31 +146,38 @@
 
   <!-- ── PŘEHLED ── -->
   <section id="prehled" class="on">
-    <h2>Dnes</h2>
-    <div class="grid g4">
-      <div class="panel stat"><div class="n" id="sReady">–</div><div class="l">čeká na práci</div></div>
-      <div class="panel stat"><div class="n" id="sRun">–</div><div class="l">běží teď</div></div>
-      <div class="panel stat"><div class="n" id="sBlock">–</div><div class="l">čeká na tebe</div></div>
-      <div class="panel stat"><div class="n" id="sCost">–</div><div class="l" id="sCostLabel">běhů agenta</div></div>
+    <div class="dashboard-layout">
+      <div>
+        <h2>Právě teď / Right now</h2><div id="active"></div>
+        <h2>Poslední události / Recent events</h2><div id="events"></div>
+      </div>
+      <aside class="rail">
+        <div class="rail-title"><h2 style="margin:0">Stav systému / System</h2><span id="platformState" class="tag">–</span></div>
+        <div class="panel" style="padding:6px 16px">
+          <div class="indicator" onclick="openWork('tasks')"><span class="indicator-label">Připravené / Ready</span><span id="sReady" class="indicator-value">–</span></div>
+          <div class="indicator" onclick="openWork('tasks')"><span class="indicator-label">Běží / Running</span><span id="sRun" class="indicator-value">–</span></div>
+          <div class="indicator" onclick="openWork('decisions')"><span class="indicator-label">Rozhodnutí / Decisions</span><span id="sBlock" class="indicator-value">–</span></div>
+          <div class="indicator"><span class="indicator-label">Běhy agentů / Runs</span><span id="sCost" class="indicator-value">–</span></div>
+          <div class="indicator" onclick="tab('projekty')"><span class="indicator-label">Projekty / Projects</span><span id="sProjects" class="indicator-value">–</span></div>
+          <div class="indicator" onclick="tab('prostredi')"><span class="indicator-label">Artefakty / Artifacts</span><span id="sArtifacts" class="indicator-value">–</span></div>
+          <div class="indicator" onclick="openSettings('accounts')"><span class="indicator-label">GitHub účty / Accounts</span><span id="sGithub" class="indicator-value">–</span></div>
+        </div>
+      </aside>
     </div>
-
-    <h2>Kdo právě pracuje</h2>
-    <div id="active"></div>
-
-    <h2>Poslední události</h2>
-    <div id="events"></div>
   </section>
 
-  <!-- ── ROZHODNUTÍ ── -->
-  <section id="rozhodnuti">
-    <h2>Čeká na tvoje rozhodnutí</h2>
-    <p class="hint" style="margin-bottom:16px">Agent narazil na volbu, kterou nemá v politice pokrytou, a zastavil se.
-      Tvoje odpověď se uloží jako ADR a příště se nabídne jako precedent.</p>
-    <div id="decisions"></div>
-  </section>
-
-  <!-- ── ÚKOLY ── -->
-  <section id="ukoly">
+  <!-- ── PRÁCE ── -->
+  <section id="prace">
+    <div class="subnav">
+      <button data-work="tasks" class="on" onclick="workTab('tasks')">Úkoly / Tasks</button>
+      <button data-work="decisions" onclick="workTab('decisions')">Rozhodnutí / Decisions <span id="workDecBadge"></span></button>
+    </div>
+    <div id="work-decisions" class="subpane">
+      <h2>Čeká na tvoje rozhodnutí / Needs your decision</h2>
+      <p class="hint" style="margin-bottom:16px">Odpověď se uloží jako ADR a příště nabídne jako precedent. / The answer becomes an ADR precedent.</p>
+      <div id="decisions"></div>
+    </div>
+    <div id="work-tasks" class="subpane on">
     <h2>Nový úkol</h2>
     <div class="panel">
       <div id="taskErr"></div>
@@ -181,6 +216,7 @@
     <p class="hint">Klikni na úkol a uvidíš, co se s ním dělo krok po kroku.</p>
     <div id="tasks"></div>
     <div id="timeline"></div>
+    </div>
   </section>
 
   <!-- ── PROJEKTY ── -->
@@ -245,30 +281,36 @@
     </div>
   </section>
 
-  <section id="nastaveni">
-    <h2>Nastavení</h2>
-    <div class="panel">
-      <p class="hint" style="margin:0">Změny platí okamžitě, restart není potřeba.
-      Hesla se zobrazují zamaskovaná — pole nech být, pokud ho neměníš.</p>
-    </div>
-    <div id="setForm"></div>
-
-    <h2>GitHub účty / GitHub accounts</h2>
-    <div class="panel">
-      <p class="hint">Připojené identity jsou dostupné platformě. Token zůstává šifrovaný na VPS a neposílá se do prohlížeče ani agentního podu. / Tokens stay encrypted on the VPS.</p>
-      <div id="githubAccounts"></div>
-      <div class="row" style="margin-top:14px"><button onclick="connectGitHub()">Připojit GitHub / Connect</button></div>
-      <div id="githubDevice" style="margin-top:12px"></div>
-    </div>
-
-    <h2>Agentní vývojové prostředí / Agent environment</h2>
+  <section id="prostredi">
+    <h2>Agentní prostředí / Agent environment</h2>
+    <p class="hint" style="margin-bottom:18px">Skutečné instrukce, harness a nástroje, ze kterých se skládá běh agentů. Obsah je pouze ke čtení. / The effective, read-only agent runtime inventory.</p>
+    <div id="envSummary" class="grid g4"></div>
+    <div id="envTabs" class="subnav"></div>
+    <div class="row" style="margin-bottom:12px"><input id="envSearch" placeholder="Filtrovat podle cesty nebo obsahu / Filter path or content" oninput="renderEnvironment()"></div>
     <div id="devInventory"></div>
+  </section>
 
-    <h2>Jen ke čtení</h2>
-    <div class="panel">
-      <p class="hint" style="margin-bottom:10px">Tyhle hodnoty se čtou při startu.
-      Mění se v <code>/srv/agenticdev/config/.env</code> a pak <code>agenticdev-ctl up</code>.</p>
-      <div id="setRO"></div>
+  <section id="nastaveni">
+    <h2>Nastavení platformy / Platform settings</h2>
+    <div class="panel"><p class="hint" style="margin:0">Změny platí okamžitě. Heslo nech zamaskované, pokud ho neměníš. / Changes apply immediately; leave masked secrets unchanged.</p></div>
+    <div class="settings-shell">
+      <div id="settingsNav" class="settings-nav"></div>
+      <div>
+        <div id="settings-fields" class="subpane on"><div id="setForm"></div></div>
+        <div id="settings-accounts" class="subpane">
+          <h2>GitHub účty / GitHub accounts</h2>
+          <div class="panel">
+            <p class="hint">Token zůstává šifrovaný na VPS a neposílá se do prohlížeče ani agentního podu. / Tokens remain encrypted on the VPS.</p>
+            <div id="githubAccounts"></div>
+            <div class="row" style="margin-top:14px"><button onclick="connectGitHub()">Připojit GitHub / Connect</button></div>
+            <div id="githubDevice" style="margin-top:12px"></div>
+          </div>
+        </div>
+        <div id="settings-runtime" class="subpane">
+          <h2>Runtime — pouze ke čtení / Read only</h2>
+          <div class="panel"><p class="hint">Hodnoty ze startu služby; změna vyžaduje <code>agenticdev-ctl up</code>. / Startup values require a service restart.</p><div id="setRO"></div></div>
+        </div>
+      </div>
     </div>
   </section>
 
@@ -295,7 +337,6 @@ const $ = s => document.querySelector(s);
 // shodilo to celý skript, tedy celý panel.
 const esc = s => String(s ?? '').replace(/[&<>"']/g, c =>
   ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
-const czk = n => new Intl.NumberFormat('cs-CZ',{maximumFractionDigits:0}).format(n||0)+' Kč';
 const ago = t => { if(!t) return '–'; const s=(Date.now()-new Date(t))/1000;
   if(s<60) return 'teď'; if(s<3600) return Math.floor(s/60)+' min';
   if(s<86400) return Math.floor(s/3600)+' h'; return Math.floor(s/86400)+' d'; };
@@ -322,21 +363,38 @@ async function doLogin(e){
 function tab(name){
   document.querySelectorAll('section').forEach(s=>s.classList.toggle('on', s.id===name));
   document.querySelectorAll('nav a').forEach(a=>a.classList.toggle('on', a.dataset.t===name));
-  ({rozhodnuti:loadDecisions, ukoly:loadTasks, projekty:loadProjects, tym:loadTeam, prehled:loadBoard, nastaveni:loadSettings}[name]||(()=>{}))();
+  ({prace:loadWork, projekty:loadProjects, tym:loadTeam, prehled:loadBoard,
+    prostredi:loadEnvironment, nastaveni:loadSettings}[name]||(()=>{}))();
 }
+function workTab(name){
+  document.querySelectorAll('[data-work]').forEach(x=>x.classList.toggle('on',x.dataset.work===name));
+  document.querySelectorAll('#prace .subpane').forEach(x=>x.classList.toggle('on',x.id===`work-${name}`));
+  (name==='decisions' ? loadDecisions : loadTasks)();
+}
+function openWork(name){ tab('prace'); workTab(name); }
+async function loadWork(){ await Promise.all([loadTasks(), loadDecisions()]); }
 
 // ── přehled ──
 async function loadBoard(){
   const b = await api('/v1/board');
+  const [projects, dev] = await Promise.all([
+    api('/v1/projects').catch(()=>[]),
+    DEV ? Promise.resolve(DEV) : api('/v1/developer-settings').then(value=>(DEV=value)).catch(()=>null)]);
   const c = b.task_counts||{};
   $('#sReady').textContent  = c.ready||0;
   $('#sRun').textContent    = (c.assigned||0)+(c.running||0);
   $('#sBlock').textContent  = b.pending_decisions.length;
   $('#sCost').textContent = b.runs_total ?? 0;
-  $('#sCostLabel').textContent = 'běhů agenta';
+  $('#sProjects').textContent = projects.length;
+  const inv = (dev && dev.inventory) || {};
+  $('#sArtifacts').textContent = Object.values(inv).reduce((n,v)=>n+(v||[]).length,0);
+  $('#sGithub').textContent = dev ? (dev.github.identities||[]).length : '–';
+  $('#platformState').textContent = b.platform && !b.platform.issuing_enabled ? 'STOP' : 'OK';
+  $('#platformState').className = `tag ${b.platform && !b.platform.issuing_enabled?'hot':'ok'}`;
 
   const n = b.pending_decisions.length;
   $('#decBadge').innerHTML = n ? `<span class="tag hot">${n}</span>` : '';
+  $('#workDecBadge').innerHTML = n ? `<span class="tag hot">${n}</span>` : '';
 
   $('#banner').innerHTML = b.platform && !b.platform.issuing_enabled
     ? `<div class="err">Vydávání work orderů je zastavené. Důvod: ${esc(b.platform.reason||'neuveden')}</div>` : '';
@@ -370,7 +428,7 @@ async function loadDecisions(){
         <button class="ghost sm" onclick="resolve('${d.id}',false)">Zamítnout</button>
         <button class="sm" onclick="resolve('${d.id}',true)">Schválit a pokračovat</button>
       </div>
-    </div>`).join('') : `<div class="empty">Nic nečeká. Agenti jedou.</div>`;
+    </div>`).join('') : `<div class="empty">Nic nečeká. Agenti jedou. / No decisions pending.</div>`;
 }
 async function resolve(id, approve){
   const chosen = $('#ch_'+id).value.trim(), rationale = $('#rt_'+id).value.trim();
@@ -541,17 +599,88 @@ async function kill(enabled){
 
 // ── nastavení ──
 let SET = null;
+let DEV = null;
+let ENV_KIND = 'harness';
+let ENV_SELECTED = 0;
+let SETTINGS_KIND = null;
+const ENV_LABELS = {
+  harness:'Harness', agents:'Agenti / Agents', skills:'Skilly / Skills',
+  hooks:'Hooky / Hooks', scripts:'Skripty / Scripts',
+  instructions:'Instrukce a policy / Instructions & policy'
+};
+
+async function loadEnvironment(){
+  if(!DEV) DEV = await api('/v1/developer-settings');
+  const inv = DEV.inventory || {};
+  const kinds = Object.keys(ENV_LABELS);
+  $('#envSummary').innerHTML = kinds.map(k=>`<div class="panel stat count-card" onclick="environmentTab('${k}')">
+    <div class="n">${(inv[k]||[]).length}</div><div class="l">${esc(ENV_LABELS[k])}</div></div>`).join('');
+  $('#envTabs').innerHTML = kinds.map(k=>`<button data-env="${k}" class="${k===ENV_KIND?'on':''}" onclick="environmentTab('${k}')">${esc(ENV_LABELS[k])} <span class="tag">${(inv[k]||[]).length}</span></button>`).join('');
+  renderEnvironment();
+}
+function environmentTab(kind){ ENV_KIND=kind; ENV_SELECTED=0; loadEnvironment(); }
+function selectEnvironment(index){ ENV_SELECTED=index; renderEnvironment(); }
+function renderEnvironment(){
+  if(!DEV) return;
+  const query = ($('#envSearch')?.value||'').toLowerCase();
+  const source = DEV.inventory[ENV_KIND] || [];
+  const items = source.map((item,index)=>({item,index})).filter(({item})=>{
+    const text = ENV_KIND==='agents'
+      ? `${item.role} ${item.semver} ${item.prompt_ref} ${JSON.stringify(item.tool_allowlist)} ${JSON.stringify(item.model_allowlist)}`
+      : `${item.path} ${item.content}`;
+    return !query || text.toLowerCase().includes(query);
+  });
+  if(!items.some(x=>x.index===ENV_SELECTED) && items.length) ENV_SELECTED=items[0].index;
+  if(!items.length){ $('#devInventory').innerHTML='<div class="empty">Nic nenalezeno. / Nothing found.</div>'; return; }
+  const selected = source[ENV_SELECTED];
+  const list = items.map(({item,index})=>{
+    const path = ENV_KIND==='agents' ? `${item.role}@${item.semver}` : item.path;
+    const meta = ENV_KIND==='agents' ? item.prompt_ref : `${item.lines} řádků · ${formatBytes(item.size_bytes)}`;
+    return `<button class="inventory-item ${index===ENV_SELECTED?'on':''}" onclick="selectEnvironment(${index})"><span class="path">${esc(path)}</span><span class="meta">${esc(meta)}</span></button>`;
+  }).join('');
+  let detail;
+  if(ENV_KIND==='agents'){
+    detail = `<div class="panel"><div class="file-head"><strong>${esc(selected.role)}@${esc(selected.semver)}</strong><span class="tag">agent profile</span></div>
+      <label>Prompt</label><div class="mono">${esc(selected.prompt_ref)}</div>
+      <label>Povolené nástroje / Allowed tools</label><pre>${esc(JSON.stringify(selected.tool_allowlist,null,2))}</pre>
+      <label>Povolené modely / Allowed models</label><pre>${esc(JSON.stringify(selected.model_allowlist,null,2))}</pre></div>`;
+  } else {
+    detail = `<div><div class="panel file-head"><strong class="mono">${esc(selected.path)}</strong><span class="tag">${esc(selected.language)}</span><span class="dim">${selected.lines} řádků · ${formatBytes(selected.size_bytes)} · sha256 ${esc(selected.sha256.slice(0,12))}</span>${selected.truncated?'<span class="tag hot">náhled zkrácen / truncated</span>':''}</div><pre class="file-view">${esc(selected.content)}</pre></div>`;
+  }
+  $('#devInventory').innerHTML = `<div class="inventory-layout"><div class="inventory-list">${list}</div>${detail}</div>`;
+  document.querySelectorAll('[data-env]').forEach(x=>x.classList.toggle('on',x.dataset.env===ENV_KIND));
+}
+function formatBytes(n){ return n<1024 ? `${n} B` : `${(n/1024).toFixed(n<10240?1:0)} kB`; }
+
+function settingTab(name){
+  SETTINGS_KIND = name;
+  document.querySelectorAll('[data-setting]').forEach(x=>x.classList.toggle('on',x.dataset.setting===name));
+  $('#settings-fields').classList.toggle('on',!['accounts','runtime'].includes(name));
+  $('#settings-accounts').classList.toggle('on',name==='accounts');
+  $('#settings-runtime').classList.toggle('on',name==='runtime');
+  document.querySelectorAll('[data-setting-group]').forEach(x=>x.style.display=x.dataset.settingGroup===name?'block':'none');
+}
+async function openSettings(name){ tab('nastaveni'); await loadSettings(); settingTab(name); }
 
 async function loadSettings(){
   const [settings, dev] = await Promise.all([api('/v1/settings'), api('/v1/developer-settings')]);
   SET = settings;
+  DEV = dev;
   const byGroup = {};
   SET.fields.forEach(f => (byGroup[f.group] ||= []).push(f));
 
-  $('#setForm').innerHTML = Object.entries(SET.groups).map(([gid, gname]) => {
+  if(!SETTINGS_KIND || (!SET.groups[SETTINGS_KIND] && !['accounts','runtime'].includes(SETTINGS_KIND))) {
+    SETTINGS_KIND = Object.keys(SET.groups)[0];
+  }
+  $('#settingsNav').innerHTML = Object.entries(SET.groups).map(([gid,gname])=>
+    `<button data-setting="${esc(gid)}" class="${gid===SETTINGS_KIND?'on':''}" onclick="settingTab('${esc(gid)}')">${esc(gname)}</button>`).join('') +
+    `<button data-setting="accounts" onclick="settingTab('accounts')">GitHub účty / Accounts</button>
+     <button data-setting="runtime" onclick="settingTab('runtime')">Runtime / Read only</button>`;
+
+  $('#setForm').innerHTML = Object.entries(SET.groups).map(([gid, gname], groupIndex) => {
     const fs = byGroup[gid] || [];
     if (!fs.length) return '';
-    return `<h2>${gname}</h2><div class="panel">` + fs.map(f => {
+    return `<div data-setting-group="${esc(gid)}" style="display:${groupIndex?'none':'block'}"><h2>${esc(gname)}</h2><div class="panel">` + fs.map(f => {
       const id = 'set_' + f.key;
       let input;
       if (f.kind === 'textarea') {
@@ -572,7 +701,7 @@ async function loadSettings(){
         ${input}
         ${f.hint ? `<p class="hint" style="margin:5px 0 0">${esc(f.hint)}</p>` : ''}
       </div>`;
-    }).join('') + `</div>`;
+    }).join('') + `</div></div>`;
   }).join('')
   + `<div class="row" style="margin-top:16px">
        <button onclick="saveSettings()">Uložit</button>
@@ -592,10 +721,7 @@ async function loadSettings(){
       <td><button class="ghost sm" onclick="defaultGitHub('${x.id}')">Výchozí</button> <button class="ghost sm" onclick="disconnectGitHub('${x.id}')">Odpojit</button></td></tr>`).join('') + `</table>`
     : `<div class="empty">Žádný GitHub účet není připojený. / No GitHub account connected.</div>`;
   if (!dev.github.configured) $('#githubDevice').innerHTML = `<div class="err">Na VPS chybí GITHUB_CLIENT_ID. Vytvoř GitHub OAuth App se zapnutým Device Flow a přidej Client ID do serverového .env.</div>`;
-
-  const inv = dev.inventory;
-  const list = (title, values) => `<div class="panel"><strong>${esc(title)}</strong><div style="margin-top:8px">${values.length ? values.map(v=>`<div class="mono" style="padding:3px 0">${esc(typeof v==='string'?v:(v.role+'@'+v.semver+' — '+v.prompt_ref))}</div>`).join('') : '<span class="dim">—</span>'}</div></div>`;
-  $('#devInventory').innerHTML = list('Agenti / Agents', inv.agents||[]) + list('Skilly / Skills', inv.skills||[]) + list('Hooky / Hooks', inv.hooks||[]) + list('Skripty / Scripts', inv.scripts||[]) + list('Instrukce a nastavení / Instructions & settings', inv.instructions||[]);
+  settingTab(SETTINGS_KIND);
 }
 
 async function connectGitHub(){
