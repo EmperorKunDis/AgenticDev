@@ -40,7 +40,9 @@
     *{animation-duration:.001ms !important; animation-iteration-count:1 !important; transition-duration:.001ms !important}
   }
 
-  #rd, #dots{position:absolute; top:0; left:0; z-index:0; pointer-events:none}
+  #rd, #dots{display:none}
+  #nations{position:absolute;top:0;left:0;z-index:0;pointer-events:none;opacity:.58;
+    image-rendering:pixelated}
   #scrim{position:fixed; inset:0; z-index:0; pointer-events:none; background:rgba(3,4,3,.55)}
   /* Mřížka končila pod hero a zbytek stránky byl plochá čerň — dolní
      polovina pak působila jako jiný web. Tenhle přetisk ji vede až do
@@ -316,6 +318,7 @@
 
 <canvas id="rd" aria-hidden="true"></canvas>
 <canvas id="dots" aria-hidden="true"></canvas>
+<canvas id="nations" aria-hidden="true"></canvas>
 <div id="scrim" aria-hidden="true"></div>
 <div id="weave" aria-hidden="true"></div>
 
@@ -940,6 +943,7 @@
      se tahle vrstva prostě nevykreslí, bodový ekosystém běží dál beze
      změny — je to čistě navrchní ambientní efekt, ne závislost. */
   const rd = (function(){
+    return null; // Replaced by the land-only nation simulation below.
     const canvas = document.getElementById('rd');
     const gl = canvas.getContext('webgl2', { alpha: false, antialias: false, depth: false });
     if (!gl || !gl.getExtension('EXT_color_buffer_float')) return null;
@@ -1132,6 +1136,7 @@
 
   (function(){
     const canvas = document.getElementById('dots');
+    if (canvas.style.display === 'none' || getComputedStyle(canvas).display === 'none') return;
     const ctx = canvas.getContext('2d');
 
     const COLOR = [[163,255,92], [240,214,74], [255,95,86]]; // druhy: zelená / žlutá / červená
@@ -1446,6 +1451,178 @@
     seed();
     setInterval(() => { if (Math.abs(pageH() - h) > 30) resize(); }, 900); // stránka může výšku měnit (jazyk, obsah)
     if (reduced) { draw(); if (rd) rd.render(); } else raf = requestAnimationFrame(loop);
+  })();
+
+  /* ── národy na pozadí: land-only územní roj ─────────────────
+     Inspirováno deterministickými, nezávisle tikajícími NationExecution
+     v OpenFront. Tohle není kopie herní AI: pro web zůstává jen vznik,
+     expanze, střet, ústup a vymření. Mapa je celá souš; nejsou tu aliance,
+     lodě, rakety, voda ani hory. */
+  (function(){
+    const canvas = document.getElementById('nations');
+    const ctx = canvas.getContext('2d', {alpha:true});
+    const palette = [
+      [163,255,92],[240,214,74],[104,218,255],[255,112,91],
+      [198,145,255],[103,237,178],[255,174,79]
+    ];
+    const cellPx = innerWidth < 700 ? 15 : 12;
+    let cols=0, rows=0, cells, age, strength, nations=[], timer=0, last=0, raf=0;
+    let lastCursorAt=0, lastCursorX=-999, lastCursorY=-999;
+
+    // Seeded PRNG keeps one page load internally consistent while every
+    // reload still receives a different map and a different subset.
+    let seed = (Date.now() ^ Math.floor(Math.random()*0xffffffff)) >>> 0;
+    function rnd(){ seed = (seed + 0x6D2B79F5) | 0; let t=seed;
+      t=Math.imul(t^(t>>>15),t|1); t^=t+Math.imul(t^(t>>>7),t|61);
+      return ((t^(t>>>14))>>>0)/4294967296; }
+    const pick = n => Math.floor(rnd()*n);
+    const index = (x,y) => y*cols+x;
+
+    function pageH(){ return Math.max(innerHeight, document.documentElement.scrollHeight); }
+    function neighbors(i){
+      const x=i%cols,y=Math.floor(i/cols), out=[];
+      if(x>0)out.push(i-1); if(x+1<cols)out.push(i+1);
+      if(y>0)out.push(i-cols); if(y+1<rows)out.push(i+cols);
+      return out;
+    }
+    function resize(){
+      const oldW=cols, oldH=rows, old=cells;
+      cols=Math.ceil(innerWidth/cellPx); rows=Math.ceil(pageH()/cellPx);
+      canvas.width=cols; canvas.height=rows;
+      canvas.style.width=(cols*cellPx)+'px'; canvas.style.height=(rows*cellPx)+'px';
+      cells=new Int16Array(cols*rows); cells.fill(-1);
+      age=new Uint16Array(cells.length); strength=new Float32Array(cells.length);
+      if(old && oldW){
+        for(let y=0;y<Math.min(oldH,rows);y++) for(let x=0;x<Math.min(oldW,cols);x++){
+          const a=y*oldW+x,b=index(x,y); cells[b]=old[a]; strength[b]=old[a]>=0?.65:0;
+        }
+      } else seedWorld();
+    }
+    function seedWorld(){
+      const count=3+pick(5); // pokaždé jen několik národů: 3–7
+      nations=Array.from({length:count},(_,id)=>({
+        id,color:palette[id],alive:true,cells:0,
+        expansion:.36+rnd()*.24, resilience:.2+rnd()*.34,
+        decline:.0015+rnd()*.003, phase:rnd()*Math.PI*2
+      }));
+      for(const n of nations){
+        const cx=2+pick(Math.max(1,cols-4)), cy=2+pick(Math.max(1,rows-4));
+        const seeds=4+pick(7);
+        for(let k=0;k<seeds;k++){
+          const x=Math.max(0,Math.min(cols-1,cx+pick(7)-3));
+          const y=Math.max(0,Math.min(rows-1,cy+pick(7)-3));
+          const i=index(x,y); cells[i]=n.id; strength[i]=.55+rnd()*.45;
+        }
+      }
+    }
+    function nationTraits(id){
+      return {id,color:palette[id%palette.length],alive:true,cells:0,
+        expansion:.36+rnd()*.24,resilience:.2+rnd()*.34,
+        decline:.0015+rnd()*.003,phase:rnd()*Math.PI*2};
+    }
+    function cellAtPage(x,y){
+      const cx=Math.floor(x/cellPx),cy=Math.floor(y/cellPx);
+      return cx>=0&&cy>=0&&cx<cols&&cy<rows?index(cx,cy):-1;
+    }
+    function cursorDecay(x,y){
+      const now=performance.now();
+      if(now-lastCursorAt<45||Math.hypot(x-lastCursorX,y-lastCursorY)<4)return;
+      lastCursorAt=now;lastCursorX=x;lastCursorY=y;
+      const center=cellAtPage(x,y);if(center<0)return;
+      const cx=center%cols,cy=Math.floor(center/cols);
+      for(let dy=-1;dy<=1;dy++)for(let dx=-1;dx<=1;dx++){
+        const px=cx+dx,py=cy+dy;if(px<0||py<0||px>=cols||py>=rows)continue;
+        const i=index(px,py);if(cells[i]<0)continue;
+        // Slabé opotřebení: jeden průjezd území pouze ztlumí. K vymření
+        // vede až opakovaný pohyb společně s přirozeným tlakem simulace.
+        strength[i]-=(dx===0&&dy===0?.028:.009);
+        if(strength[i]<=0){cells[i]=-1;age[i]=0;strength[i]=0;}
+      }
+    }
+    function clickUnits(x,y){
+      const center=cellAtPage(x,y);if(center<0)return;
+      let owner=cells[center];
+      if(owner<0){
+        // Prázdná zem založí nový národ. Vymřelá identita se recykluje,
+        // aby počet barev i paměť zůstaly omezené.
+        owner=nations.findIndex(n=>!n.alive);
+        if(owner<0){owner=nations.length;nations.push(nationTraits(owner));}
+        else nations[owner]=nationTraits(owner);
+      }
+      const cx=center%cols,cy=Math.floor(center/cols);
+      for(let dy=-2;dy<=2;dy++)for(let dx=-2;dx<=2;dx++){
+        if(dx*dx+dy*dy>5)continue;
+        const px=cx+dx,py=cy+dy;if(px<0||py<0||px>=cols||py>=rows)continue;
+        const i=index(px,py);
+        if(cells[i]===owner){strength[i]=Math.min(1,strength[i]+.38);age[i]=0;}
+        else if(cells[i]<0&&rnd()<.72){cells[i]=owner;strength[i]=.55+rnd()*.3;age[i]=0;}
+      }
+      cells[center]=owner;strength[center]=1;age[center]=0;nations[owner].alive=true;
+    }
+    function recount(){
+      for(const n of nations)n.cells=0;
+      for(const owner of cells)if(owner>=0&&nations[owner])nations[owner].cells++;
+      for(const n of nations)n.alive=n.cells>0;
+    }
+    function tick(dt){
+      timer+=dt; const attempts=Math.min(2400,Math.max(180,Math.floor(cells.length*.045)));
+      recount();
+      for(let k=0;k<attempts;k++){
+        const i=pick(cells.length), owner=cells[i];
+        if(owner<0)continue;
+        const nation=nations[owner], ns=neighbors(i), j=ns[pick(ns.length)], other=cells[j];
+        age[i]=Math.min(65535,age[i]+1);
+        // Velká nebo stará říše platí vyšší tlak za udržení okrajů. Tak
+        // vzniká ústup a skutečné vymření, ne jen nekonečný flood-fill.
+        const share=nation.cells/Math.max(1,cells.length);
+        const pressure=nation.decline+share*.035+Math.max(0,age[i]-180)*.000025;
+        if(rnd()<pressure*(1.25-nation.resilience)){
+          strength[i]-=.18+rnd()*.32;
+          if(strength[i]<=0){cells[i]=-1;age[i]=0;strength[i]=0;}
+          continue;
+        }
+        if(other===owner){strength[i]=Math.min(1,strength[i]+.018);continue;}
+        const pulse=.82+.18*Math.sin(timer*.18+nation.phase);
+        const frontier=nation.expansion*pulse*(.45+.55*strength[i]);
+        if(other<0){
+          if(rnd()<frontier){cells[j]=owner;age[j]=0;strength[j]=.32+rnd()*.34;}
+        }else{
+          const defender=nations[other];
+          const attack=frontier*(.7+rnd()*.6);
+          const defense=strength[j]*(.65+defender.resilience);
+          if(attack>defense){strength[j]-=.15+rnd()*.25;
+            if(strength[j]<=0){cells[j]=owner;age[j]=0;strength[j]=.25+rnd()*.3;}
+          }else if(rnd()<.18){strength[i]=Math.max(0,strength[i]-.08);}
+        }
+      }
+      // Když většina říší vymře, občas přijde nový cyklus; počet současně
+      // aktivních národů ale nikdy nepřeroste původní náhodné maximum.
+      const alive=nations.filter(n=>n.alive).length;
+      if(alive<2&&rnd()<dt*.08){cells.fill(-1);age.fill(0);strength.fill(0);seedWorld();}
+    }
+    function draw(){
+      const img=ctx.createImageData(cols,rows), d=img.data;
+      for(let i=0;i<cells.length;i++){
+        const owner=cells[i]; if(owner<0)continue;
+        const c=nations[owner].color, edge=neighbors(i).some(j=>cells[j]!==owner);
+        const a=edge?52:Math.round(14+strength[i]*25);
+        d[i*4]=c[0];d[i*4+1]=c[1];d[i*4+2]=c[2];d[i*4+3]=a;
+      }
+      ctx.putImageData(img,0,0);
+    }
+    function loop(now){
+      // Území se mění v diskrétních ticích (~12/s), ne na každém render
+      // snímku. Je to levnější a pohyb hranic působí jako živá mapa.
+      if(last&&now-last<80){raf=requestAnimationFrame(loop);return;}
+      const dt=Math.min(.12,last?(now-last)/1000:.08);last=now;
+      tick(dt);draw();raf=requestAnimationFrame(loop);
+    }
+    addEventListener('resize',()=>{resize();draw();});
+    addEventListener('pointermove',e=>cursorDecay(e.pageX,e.pageY),{passive:true});
+    addEventListener('pointerdown',e=>clickUnits(e.pageX,e.pageY),{passive:true});
+    setInterval(()=>{if(Math.abs(canvas.clientHeight-pageH())>cellPx*2){resize();draw();}},1000);
+    resize();recount();draw();
+    if(!reduced)raf=requestAnimationFrame(loop);
   })();
 </script>
 </body>
