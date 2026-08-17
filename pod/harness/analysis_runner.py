@@ -23,8 +23,9 @@ def _run(provider: str, prompt: str, env: dict, cwd: pathlib.Path) -> tuple[str,
     cmd = command(provider, prompt, mode="analysis")
     if not cmd: return "AUTH_REQUIRED", "provider CLI missing"
     p = subprocess.run(cmd, cwd=cwd, env=env, capture_output=True, text=True)
-    output = (p.stdout or "") + (p.stderr or "")
-    return classify_failure(output, p.returncode), output
+    diagnostics = (p.stdout or "") + (p.stderr or "")
+    state = classify_failure(diagnostics, p.returncode)
+    return state, (p.stdout or "") if state == "OK" else diagnostics
 
 
 def _json(text: str) -> dict:

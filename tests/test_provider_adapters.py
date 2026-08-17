@@ -1,11 +1,15 @@
 import importlib.util
 import pathlib
+import sys
 import unittest
 from unittest import mock
 
 ROOT=pathlib.Path(__file__).parents[1]
 spec=importlib.util.spec_from_file_location("providers",ROOT/"pod/harness/providers.py")
 mod=importlib.util.module_from_spec(spec);spec.loader.exec_module(mod)
+sys.modules["providers"]=mod
+analysis_spec=importlib.util.spec_from_file_location("analysis_runner",ROOT/"pod/harness/analysis_runner.py")
+analysis=importlib.util.module_from_spec(analysis_spec);analysis_spec.loader.exec_module(analysis)
 
 class ProviderAdapters(unittest.TestCase):
  def test_auth_and_quota_failures_are_recoverable_states(self):
@@ -24,5 +28,10 @@ class ProviderAdapters(unittest.TestCase):
   launcher=(ROOT/"launcher/agenticdev").read_text()
   self.assertIn("codex login --device-auth",launcher)
   self.assertNotIn("|| codex login\n",launcher)
+ def test_analysis_parses_stdout_without_cli_diagnostics(self):
+  result=mock.Mock(returncode=0,stdout='{"result":true}',stderr='Codex diagnostic\n')
+  with mock.patch.object(analysis,"command",return_value=["codex"]),mock.patch.object(analysis.subprocess,"run",return_value=result):
+   state,output=analysis._run("codex","scan",{},pathlib.Path("/tmp"))
+  self.assertEqual(state,"OK");self.assertEqual(output,'{"result":true}')
 
 if __name__=="__main__":unittest.main()
