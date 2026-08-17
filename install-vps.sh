@@ -451,7 +451,7 @@ if (( FRESH )); then
   FJ_HOOK_SECRET=$(gen 48 40)
   RUNNER_SECRET=$(openssl rand -hex 20)
 
-  ALLOW="registry.npmjs.org,pypi.org,files.pythonhosted.org,codeload.github.com,github.com"
+  ALLOW="chatgpt.com,api.anthropic.com,registry.npmjs.org,pypi.org,files.pythonhosted.org,codeload.github.com,github.com"
   [[ -n "${PROV_HOST:-}" ]] && ALLOW="$PROV_HOST,$ALLOW"
 
   if [[ "$AGENTICDEV_MODE" == "public" ]]; then

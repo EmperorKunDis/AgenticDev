@@ -318,7 +318,7 @@ def next_work_order(project: str, provider: str, analysis: bool = False,
                 "model_allowlist": models,
                 "egress_allowlist": os.environ.get(
                     "EGRESS_ALLOWLIST",
-                    "api.openai.com,registry.npmjs.org,pypi.org").split(","),
+                    "chatgpt.com,api.anthropic.com,registry.npmjs.org,pypi.org").split(","),
                 "human_gate": ["schema_migration", "dependency_add", "prod_deploy"],
                 "max_wall_clock_min": 240,
                 "budget_czk_total": float(task["budget_czk"]),
@@ -386,7 +386,11 @@ def broker_authorize(body: BrokerRequest, ws: dict = Depends(current_ws), _: Non
         signed=set(m.get("policy",{}).get("egress_allowlist") or [])
         mandatory={urlparse(CONTROL_PLANE_URL).hostname}
         live=(signed & configured) | {x for x in mandatory if x}
-        if str(row["data_class"])=="restricted":live -= {"api.openai.com","api.anthropic.com","generativelanguage.googleapis.com"}
+        provider=str(m.get("runtime",{}).get("provider") or "")
+        provider_egress={"codex":{"chatgpt.com"},"claude":{"api.anthropic.com"}}
+        cloud_egress=set().union(*provider_egress.values())
+        live -= cloud_egress - provider_egress.get(provider,set())
+        if str(row["data_class"])=="restricted":live -= cloud_egress
         return {"authorized": True, **{k: str(row[k]) for k in
                 ("principal_id", "workstation_id", "project", "task_id", "phase", "work_order_id")},
                 "unix_user": row["unix_user"], "kill_epoch": int(row["epoch"]),

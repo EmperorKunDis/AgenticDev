@@ -185,7 +185,7 @@ services:
       PROVIDER_ALLOWLIST: ${PROVIDER_ALLOWLIST:-claude,codex}
       CLAUDE_MODEL_POLICY: ${CLAUDE_MODEL_POLICY:-}
       CODEX_MODEL_POLICY: ${CODEX_MODEL_POLICY:-}
-      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-api.openai.com,api.anthropic.com,registry.npmjs.org,pypi.org}
+      EGRESS_ALLOWLIST: ${EGRESS_ALLOWLIST:-chatgpt.com,api.anthropic.com,registry.npmjs.org,pypi.org}
       WORKSPACE_ROOT: /workspace-templates
       JOIN_TOKEN: ${JOIN_TOKEN:?chybi JOIN_TOKEN}
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?chybi DASHBOARD_TOKEN}
