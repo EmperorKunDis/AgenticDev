@@ -295,8 +295,19 @@ class Broker:
   for scope in m["repo"].get("write_scope",[]):
    rel=scope_path(scope); target=work/rel
    if not target.exists():
-    if not (scope.endswith('/**') or (len(rel.parts)==1 and '.' not in rel.name)):raise Reject("scope_target_missing")
-    target=self.safe_dir(work,*rel.parts)
+    if scope.endswith('/**') or (len(rel.parts)==1 and '.' not in rel.name):
+     target=self.safe_dir(work,*rel.parts)
+    else:
+     parent=work
+     for part in rel.parts[:-1]:
+      candidate=parent/part
+      if candidate.is_symlink():raise Reject("symlink_escape")
+      candidate.mkdir(mode=0o550,exist_ok=True)
+      if work.resolve() not in candidate.resolve().parents:raise Reject("symlink_escape")
+      parent=candidate
+     try:
+      fd=os.open(target,os.O_WRONLY|os.O_CREAT|os.O_EXCL|os.O_NOFOLLOW,0o600);os.close(fd)
+     except OSError as e:raise Reject("scope_target_create_failed") from e
    resolved=target.resolve()
    if work.resolve() not in resolved.parents:raise Reject("symlink_escape")
    self._chown_tree(target,uid,gid)
