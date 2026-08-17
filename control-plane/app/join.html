@@ -57,11 +57,16 @@
     font:12.5px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;
     color:#c9d1d9; white-space:pre-wrap; word-break:break-all;
   }
+  .command{position:relative; margin-bottom:10px}
+  .command pre{margin:0; padding:46px 13px 13px}
   .copy{
-    background:transparent; border:1px solid var(--line); color:var(--dim);
-    width:auto; padding:6px 12px; font-size:12.5px; margin:0;
+    position:absolute; top:8px; right:8px; display:inline-flex; align-items:center;
+    gap:7px; background:#171a21; border:1px solid var(--line); color:var(--ink);
+    width:auto; padding:6px 10px; font-size:12.5px; margin:0; z-index:1;
   }
-  .copy:hover{color:var(--ink); filter:none}
+  .copy:hover{border-color:var(--accent-soft); filter:none}
+  .copy svg{width:15px; height:15px; fill:none; stroke:currentColor; stroke-width:1.8}
+  .copy.ok{border-color:var(--ok); color:var(--ok)}
   .os{display:flex; gap:8px; margin-bottom:16px}
   .os button{
     flex:1; margin:0; padding:9px; font-size:13.5px; background:transparent;
@@ -115,14 +120,24 @@
     <div id="step-net">
       <h2>1 — Připoj se do sítě</h2>
       <p id="net-hint">Nainstaluj Tailscale a přihlas se tímhle klíčem.</p>
-      <pre id="cmd1">—</pre>
-      <button class="copy" data-for="cmd1">Zkopírovat</button>
+      <div class="command">
+        <pre id="cmd1">—</pre>
+        <button class="copy" type="button" data-for="cmd1" aria-label="Kopírovat příkaz">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+          <span>Kopírovat</span>
+        </button>
+      </div>
     </div>
 
     <h2 id="inst-h" style="margin-top:24px">2 — Nainstaluj AgenticDev</h2>
     <p>Stáhne instalátor a spustí ho. Ověří si, že mluví se správným serverem.</p>
-    <pre id="cmd2">—</pre>
-    <button class="copy" data-for="cmd2">Zkopírovat</button>
+    <div class="command">
+      <pre id="cmd2">—</pre>
+      <button class="copy" type="button" data-for="cmd2" aria-label="Kopírovat příkaz">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="8" y="8" width="11" height="11" rx="2"/><path d="M16 8V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h2"/></svg>
+        <span>Kopírovat</span>
+      </button>
+    </div>
 
     <div class="foot">
       Po instalaci najdeš na ploše ikonu <strong>AgenticDev</strong>. Klikni na ni
@@ -227,11 +242,31 @@ document.querySelectorAll('.os button').forEach(b => {
   };
 });
 
+async function copyText(text) {
+  if (navigator.clipboard && window.isSecureContext) {
+    await navigator.clipboard.writeText(text);
+    return;
+  }
+  const area = document.createElement('textarea');
+  area.value = text; area.setAttribute('readonly', '');
+  area.style.position = 'fixed'; area.style.opacity = '0';
+  document.body.appendChild(area); area.select();
+  const ok = document.execCommand('copy');
+  area.remove();
+  if (!ok) throw new Error('copy failed');
+}
+
 document.querySelectorAll('.copy').forEach(b => {
   b.onclick = async () => {
-    await navigator.clipboard.writeText($('#' + b.dataset.for).textContent);
-    const t = b.textContent; b.textContent = 'Zkopírováno';
-    setTimeout(() => b.textContent = t, 1400);
+    const label = b.querySelector('span');
+    try {
+      await copyText($('#' + b.dataset.for).textContent);
+      label.textContent = 'Zkopírováno'; b.classList.add('ok');
+      setTimeout(() => { label.textContent = 'Kopírovat'; b.classList.remove('ok'); }, 1600);
+    } catch (_) {
+      label.textContent = 'Označ a zkopíruj';
+      setTimeout(() => { label.textContent = 'Kopírovat'; }, 2200);
+    }
   };
 });
 </script>
