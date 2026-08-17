@@ -24,6 +24,18 @@ ok()   { printf "${G}✓ %s${O}\n" "$*"; }
 warn() { printf "${Y}! %s${O}\n" "$*"; }
 die()  { printf "${R}✗ %s${O}\n" "$*" >&2; exit 1; }
 
+provider_probe() {
+  local provider="$1" output
+  if [[ "$provider" == claude ]]; then
+    output=$(claude -p "Reply exactly OK." --max-turns 1 2>&1) || return 1
+  else
+    output=$(codex exec --skip-git-repo-check --ephemeral --sandbox read-only \
+      --ignore-user-config --ignore-rules "Reply exactly OK." 2>&1) || return 1
+  fi
+  ! grep -Eqi 'not logged in|login required|failed to authenticate|token has been revoked|unauthorized' \
+    <<<"$output"
+}
+
 login() {
   . "$CFG" 2>/dev/null || die "Tenhle účet není připojený.\n   Správce ho založí na VPS:  agenticdev-ctl user add '$(id -un)'"
   local challenge cid nonce signature r keyf="$CFG_DIR/device.key"
@@ -116,15 +128,21 @@ cmd_work() {
   case "${provider_pick:-1}" in 1) provider=claude ;; 2) provider=codex ;; *) die "Neplatný provider." ;; esac
   if [[ "$provider" == claude ]]; then
     command -v claude >/dev/null || die "Claude Code CLI na VPS chybí."
-    claude auth status >/dev/null 2>&1 || claude
-    claude auth status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Claude není platné."
+    if ! provider_probe claude; then
+      warn "Claude session není použitelná; spouštím přihlášení / Claude session is unusable; starting login"
+      claude auth login </dev/tty >/dev/tty
+      provider_probe claude || die "AUTH_REQUIRED: přihlášení Claude stále není platné / Claude login is still invalid."
+    fi
   else
     command -v codex >/dev/null || die "Codex CLI na VPS chybí."
     # Práce běží na vzdáleném VPS. Výchozí OAuth callback poslouchá na
     # localhostu VPS a prohlížeč uživatele se k němu nedostane; device flow
     # je určený pro SSH/headless prostředí.
-    codex login status >/dev/null 2>&1 || codex login --device-auth
-    codex login status >/dev/null 2>&1 || die "AUTH_REQUIRED: přihlášení Codex není platné."
+    if ! provider_probe codex; then
+      warn "Codex session není použitelná; spouštím device login / Codex session is unusable; starting device login"
+      codex login --device-auth </dev/tty >/dev/tty
+      provider_probe codex || die "AUTH_REQUIRED: přihlášení Codex stále není platné / Codex login is still invalid."
+    fi
   fi
   curl -fsS -X POST "$CONTROL_PLANE/v1/provider-profile" \
     -H "Authorization: Bearer $t" -H 'content-type: application/json' \

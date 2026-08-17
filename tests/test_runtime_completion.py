@@ -137,7 +137,7 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('@anthropic-ai/claude-code @openai/codex',docker);self.assertNotIn('pi-coding-agent',docker)
   self.assertIn('from providers import command',harness);self.assertNotIn('shutil.which("pi")',harness)
   self.assertIn('provider_denied',broker);self.assertIn('/home/node/.claude',broker);self.assertIn('/home/node/.codex',broker)
-  self.assertIn('claude auth status',launcher);self.assertIn('codex login status',launcher)
+  self.assertIn('provider_probe claude',launcher);self.assertIn('provider_probe codex',launcher)
  def test_repository_analysis_is_versioned_cited_and_gates_work_orders(self):
   migrate=(ROOT/'control-plane/app/migrate.py').read_text();repo=(ROOT/'control-plane/app/repository.py').read_text();main=(ROOT/'control-plane/app/main.py').read_text()
   self.assertIn('CREATE TABLE IF NOT EXISTS provider_profile',migrate)
