@@ -262,8 +262,8 @@ Přihlas se jako obyčejný člověk, ne jako root: `tailscale ssh <login>@<vps>
 - [ ] Ven se pod dostane jen na domény z allowlistu — zkus `curl` na
       něco, co v něm není
 - [ ] Po ukončení podu je větev odeslaná do gitu
-- [ ] Druhý člověk může pracovat **současně** s prvním a útrata sedí
-      každému na jeho účtu
+- [ ] Druhý člověk může pracovat **současně** s prvním a používá vlastní
+      subscription identitu
 
 ---
 

@@ -298,7 +298,6 @@ class NewProject(BaseModel):
     code: str
     client_name: str
     data_class: str = "internal"
-    budget_czk_month: float = 5000
     import_url: str | None = None      # existující repo — naklonuje se i s historií
 
 
@@ -545,10 +544,9 @@ def create_project(p: NewProject, op: dict = Depends(operator)):
 
         models = None
         proj = c.execute(
-            """INSERT INTO project (client_id, code, repo_url, data_class,
-                                    model_allowlist, budget_czk_month)
-               VALUES (%s,%s,%s,%s,%s,%s) RETURNING *""",
-            (client["id"], code, repo, p.data_class, models, p.budget_czk_month)).fetchone()
+            """INSERT INTO project (client_id, code, repo_url, data_class, model_allowlist)
+               VALUES (%s,%s,%s,%s,%s) RETURNING *""",
+            (client["id"], code, repo, p.data_class, models)).fetchone()
 
         owner_principal = who(op)
         if owner_principal:
@@ -750,10 +748,7 @@ def list_projects(op: dict = Depends(operator)):
             """SELECT p.*, cl.name AS client_name,
                       (SELECT kind FROM phase WHERE project_id = p.id AND active LIMIT 1) AS phase,
                       (SELECT count(*) FROM task t JOIN phase ph ON ph.id=t.phase_id
-                        WHERE ph.project_id = p.id) AS task_count,
-                      (SELECT COALESCE(SUM(ar.cost_czk),0) FROM agent_run ar
-                         JOIN task t ON t.id=ar.task_id JOIN phase ph ON ph.id=t.phase_id
-                        WHERE ph.project_id = p.id) AS spent_czk
+                        WHERE ph.project_id = p.id) AS task_count
                FROM project p LEFT JOIN client cl ON cl.id = p.client_id
                ORDER BY p.created_at DESC""").fetchall()
 
@@ -787,7 +782,6 @@ class NewTask(BaseModel):
     dod: list[str] = []
     write_scope: list[str] = ["src/**", "tests/**"]
     risk: str = "standard"
-    budget_czk: float = 300
     priority: int = 100
 
 
@@ -804,10 +798,10 @@ def create_task(t: NewTask, op: dict = Depends(operator)):
             raise HTTPException(404, f"projekt '{t.project}' nemá aktivní fázi")
         row = c.execute(
             """INSERT INTO task (phase_id, kind, title, spec_ref, dod, write_scope,
-                                 risk, budget_czk, state, priority)
-               VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'ready',%s) RETURNING *""",
+                                 risk, state, priority)
+               VALUES (%s,%s,%s,%s,%s,%s,%s,'ready',%s) RETURNING *""",
             (ph["id"], t.kind, t.title, t.spec_ref, json.dumps(t.dod),
-             t.write_scope, t.risk, t.budget_czk, t.priority)).fetchone()
+             t.write_scope, t.risk, t.priority)).fetchone()
         _emit(c, who(op), "task", str(row["id"]), "created", {"title": t.title}, str(row["id"]))
     return {"task": row}
 
@@ -815,7 +809,6 @@ def create_task(t: NewTask, op: dict = Depends(operator)):
 @router.get("/v1/tasks")
 def list_tasks(state: str | None = None, op: dict = Depends(operator)):
     q = """SELECT t.*, p.code AS project, ph.kind AS phase,
-                  COALESCE((SELECT SUM(cost_czk) FROM agent_run WHERE task_id=t.id),0) AS spent_czk,
                   (SELECT display_name FROM principal pr
                      JOIN workstation w ON w.principal_id=pr.id
                      JOIN assignment a ON a.workstation_id=w.id
@@ -840,7 +833,7 @@ def task_timeline(task_id: str, op: dict = Depends(operator)):
     """
     with db() as c:
         task = c.execute(
-            """SELECT t.id, t.title, t.state, t.budget_czk, p.code AS project,
+            """SELECT t.id, t.title, t.state, p.code AS project,
                       ph.kind AS phase
                FROM task t JOIN phase ph ON ph.id = t.phase_id
                JOIN project p ON p.id = ph.project_id
@@ -854,7 +847,7 @@ def task_timeline(task_id: str, op: dict = Depends(operator)):
                ORDER BY ts""", (task_id,)).fetchall()
         runs = c.execute(
             """SELECT created_at, role, state_name, model, duration_ms, outcome,
-                      tokens_in, tokens_out, cost_czk, transcript_uri
+                      tokens_in, tokens_out, transcript_uri
                FROM agent_run WHERE task_id = %s ORDER BY created_at""",
             (task_id,)).fetchall()
         decisions = c.execute(
@@ -865,12 +858,8 @@ def task_timeline(task_id: str, op: dict = Depends(operator)):
     totals = {
         "runs": len(runs),
         "duration_ms": sum(r["duration_ms"] or 0 for r in runs),
-        "cost_czk": float(sum(r["cost_czk"] or 0 for r in runs)),
         "tokens": sum((r["tokens_in"] or 0) + (r["tokens_out"] or 0) for r in runs),
     }
-    # Tokeny dnes nikdo neohlašuje (Pi je nevydává), takže cena zůstává
-    # nulová. Říkáme to rovnou, aby se nula nečetla jako „nic to nestálo".
-    totals["cost_measured"] = totals["tokens"] > 0
 
     return {"task": task, "events": events, "runs": runs,
             "decisions": decisions, "totals": totals}
@@ -983,12 +972,6 @@ def board(op: dict = Depends(operator)):
         state = c.execute("SELECT * FROM platform_state WHERE id = 1").fetchone()
         counts = c.execute(
             "SELECT state, count(*) AS n FROM task GROUP BY state").fetchall()
-        spend = c.execute(
-            """SELECT COALESCE(SUM(cost_czk),0) AS today FROM agent_run
-                WHERE created_at > date_trunc('day', now())""").fetchone()
-        month = c.execute(
-            """SELECT COALESCE(SUM(cost_czk),0) AS m FROM agent_run
-                WHERE created_at > date_trunc('month', now())""").fetchone()
         pending = c.execute(
             """SELECT d.*, t.title, p.code AS project FROM decision d
                JOIN task t ON t.id = d.task_id
@@ -1006,15 +989,11 @@ def board(op: dict = Depends(operator)):
         recent = c.execute(
             """SELECT ts, subject_type, verb, payload FROM event
                ORDER BY seq DESC LIMIT 25""").fetchall()
-        # Nula u útraty má dva různé významy: „nic se neutratilo" a „nikdo
-        # to nezměřil". Tokeny dnes neohlašuje nikdo (Pi je nevydává), takže
-        # bez tohohle příznaku by panel tvrdil, že agentní vývoj je zdarma.
         runs = c.execute(
             """SELECT count(*) AS n, COALESCE(SUM(tokens_in + tokens_out),0) AS tok
                FROM agent_run""").fetchone()
     return {"platform": state, "task_counts": {r["state"]: r["n"] for r in counts},
-            "spend_today_czk": float(spend["today"]), "spend_month_czk": float(month["m"]),
-            "runs_total": runs["n"], "spend_measured": runs["tok"] > 0,
+            "runs_total": runs["n"], "tokens_total": runs["tok"],
             "pending_decisions": pending, "active_work": active, "recent_events": recent}
 
 

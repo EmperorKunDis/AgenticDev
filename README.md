@@ -385,12 +385,9 @@ Honest status. These are tracked as blockers to 1.0:
   per-run record, a transcript file per run, and a per-task timeline in the
   panel — see [Seeing what happened](#seeing-what-happened).
 - **Join tokens never expire** and are per-instance, not per-person.
-- **Cost is not measured, and the panel says so.** Each run records its
-  model, duration, outcome and transcript, but nothing reports token counts
-  — so `cost_czk` stays 0 and the panel shows "útrata se neměří" rather
-  than `0 Kč`, which would read as free. Wiring real numbers needs usage
-  data out of the harness's model client. (The `len/3` estimate is the
-  context-size budget gate, not spend; there is no `PRICING` table.)
+- **Subscriptions are personal.** AgenticDev records the model, duration,
+  outcome and transcript, but does not impose or display cash budgets.
+  CPU, memory, wall-time and context guards remain operational safety limits.
 - **The isolated runner needs live proof.** Actions use a dedicated
   Docker-in-Docker daemon and never receive the host Docker socket. The
   isolation and fail-closed merge behavior still need adversarial validation

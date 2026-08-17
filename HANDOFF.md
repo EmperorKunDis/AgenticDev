@@ -85,7 +85,7 @@ Jsou popsané v README i SECURITY.md. Nejsou to překvapení, ale nedělej,
 | Brána bez testů a approval nemá live důkaz | workflow nyní bez rozpoznaných testů selže a vynucuje approval ≥ 1; potvrď to na skutečném PR |
 | Samostatně distribuované director balíky nejsou zavedené | role běží oddělenými nativními CLI procesy z verzovaného harness image |
 | Join heslo nemá expiraci | odvolání = změna hesla všem |
-| Útrata se neměří | tokeny neohlašuje nikdo; `cost_czk` je 0 a panel píše „neměří se" místo `0 Kč`. `PRICING` v kódu nikdy nebyla, `len/3` je rozpočtová brána na kontext |
+| Subscription režim | každý používá vlastní subscription; panel ani work order neobsahuje peněžní rozpočty |
 | Chybí metriky a trace | Grafana, Loki, Prometheus, Tempo zakomentované. Ledger, `agent_run`, transkripty a časová osa úkolu ale fungují |
 
 Pořadí, v jakém by se to mělo řešit, je v README v sekci o omezeních.
@@ -192,7 +192,7 @@ přesně ten záznam, podle kterého se automatický běh dá doladit.
 **Do `agent_run` neposílej tokeny ani cenu, dokud je někdo neměří.** Harness
 je nezná — Pi je neohlašuje. Vymyšlené číslo v auditní stopě je horší než
 prázdné pole, protože se za měsíc bude čít jako měření. Panel proto
-rozlišuje „nula" a „neměří se" příznakem `spend_measured`.
+zobrazuje počet běhů, dobu, výsledek a transkript bez peněžních metrik.
 
 **Na `event` nesmí být pravidlo (RULE).** Append-only vynucuje trigger
 `event_no_change`, ne `CREATE RULE ... DO INSTEAD NOTHING`. Pravidlo na

@@ -487,6 +487,7 @@ TZ=Europe/Prague
 # tam byl actor prázdný.
 ADMIN_NAME='$(envq "$ADMIN_NAME")'
 ADMIN_EMAIL='$(envq "$ADMIN_EMAIL")'
+GITHUB_CLIENT_ID='$(envq "${GITHUB_CLIENT_ID:-}")'
 
 # ─── tajemství ───────────────────────────────────────────────
 POSTGRES_PASSWORD=$PG_PW

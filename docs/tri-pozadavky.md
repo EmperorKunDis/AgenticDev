@@ -172,11 +172,9 @@ Dvě věci, na kterých záleží, když to chceš ladit:
 - **Do promptu agenta jde z padlé kontroly jen 25 řádků**, aby se nezahltil.
   Do transkriptu jde celý výpis. Ladíš tedy z úplného, ne z ocasu.
 
-**Útrata se neměří a panel to říká rovnou.** Zapisuje se model, doba,
-výsledek a transkript; tokeny neohlašuje nikdo, takže `cost_czk` zůstává
-nulový. Panel proto místo `0 Kč` píše „útrata se neměří" — nula by se
-čtla jako „zdarma". Skutečná čísla potřebují údaje o spotřebě z modelového
-klienta harnessu, a než budou, žádné číslo si nevymýšlíme.
+**Modely běží přes osobní subscription.** Zapisuje se model, doba, výsledek
+a transkript. Peněžní rozpočty platforma nevede; technické limity chrání
+jen stabilitu a bezpečnost runtime.
 
 **Jak to ověřit:**
 
@@ -198,8 +196,8 @@ Poctivě, ať se to nehledá v kódu:
   logu jako varování. Prázdná brána není brána.
 - **Sdílené prostředí je tenké.** Instrukce, čtyři skills, git nástroj,
   model. Žádné hooky ani subagenty — v Pi vrstvě zatím nejsou.
-- **Útrata se neměří**, takže „vyplatí se to u téhle zakázky" se dnes
-  nezodpoví. Doba běhu a výsledek ano.
+- **Peněžní rozpočty nejsou součástí platformy.** Doba běhu, výsledek a
+  transkript zůstávají auditovatelné.
 - **Interaktivní session nemá transkript od nás.** Píše si ho Pi do
   `~/.pi/agent` toho člověka. Tee děláme jen u automatického běhu, protože
   u interaktivního bychom rozbili obrazovku.

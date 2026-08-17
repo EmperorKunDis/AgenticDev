@@ -191,6 +191,8 @@ services:
       DASHBOARD_TOKEN: ${DASHBOARD_TOKEN:?chybi DASHBOARD_TOKEN}
       FORGEJO_URL: http://forgejo:3000
       FORGEJO_TOKEN: ${FORGEJO_TOKEN:-}
+      # Public OAuth App identifier. Device Flow does not use a client secret.
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID:-}
       # Podpis webhooku z Forgeja. Bez něj control plane webhook odmítne —
       # nepodepsaný požadavek by dovolil označovat úkoly za hotové komukoli.
       FORGEJO_HOOK_SECRET: ${FORGEJO_HOOK_SECRET:-}

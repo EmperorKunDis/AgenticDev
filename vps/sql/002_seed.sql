@@ -12,13 +12,13 @@ FROM client WHERE name = 'AgenticDev interní';
 INSERT INTO phase (project_id, kind, order_idx, active)
 SELECT id, 'implementation', 3, true FROM project WHERE code = 'sandbox';
 
-INSERT INTO task (phase_id, kind, title, spec_ref, dod, write_scope, risk, budget_czk, state, priority)
+INSERT INTO task (phase_id, kind, title, spec_ref, dod, write_scope, risk, state, priority)
 SELECT p.id, 'feature',
        'Smoke test: přidej funkci slugify + testy',
        'prd/sandbox/10-requirements.md#REQ-001',
        '["funkce slugify zvládá českou diakritiku","unit testy pokrývají prázdný vstup a diakritiku","README zmiňuje použití"]'::jsonb,
        ARRAY['src/**','tests/**'],
-       'low', 50, 'ready', 1
+       'low', 'ready', 1
 FROM phase p JOIN project pr ON pr.id = p.project_id WHERE pr.code = 'sandbox';
 
 INSERT INTO principal (kind, display_name, email)

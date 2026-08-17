@@ -217,9 +217,9 @@ work_order     (id, assignment_id, manifest_hash, issued_at, revoked_at)
 -- Kontext a agenti
 context_bundle (id, manifest_hash, spec_json, size_tokens, built_at)
 agent_profile  (id, role, version, prompt_ref, tool_allowlist,
-                model_allowlist, budget_tokens, budget_czk)
+                model_allowlist)
 agent_run      (id, task_id, profile_id, input_hash, model, seed,
-                tokens_in, tokens_out, cost_czk, duration_ms,
+                tokens_in, tokens_out, duration_ms,
                 outcome, transcript_uri)
 
 -- Výstupy a rozhodnutí
@@ -301,9 +301,9 @@ Tohle je centrální artefakt celého systému. Kontejner na stanici si o něj �
 
   // workery, které director SMÍ spustit — nic víc
   "worker_pool": [
-    {"role": "architect",   "profile": "architect@3.2",   "budget_czk": 40},
-    {"role": "implementer", "profile": "implementer@5.1", "budget_czk": 180},
-    {"role": "reviewer",    "profile": "reviewer@2.8",    "budget_czk": 60}
+    {"role": "architect",   "profile": "architect@3.2"},
+    {"role": "implementer", "profile": "implementer@5.1"},
+    {"role": "reviewer",    "profile": "reviewer@2.8"}
   ],
 
   // vynucuje HARNESS, ne director — director tyhle hodnoty nemůže přepsat
@@ -312,7 +312,6 @@ Tohle je centrální artefakt celého systému. Kontejner na stanici si o něj �
     "egress_allowlist": ["api.anthropic.com", "registry.npmjs.org", "vps.tailnet"],
     "human_gate": ["schema_migration", "dependency_add", "prod_deploy"],
     "max_wall_clock_min": 240,
-    "budget_czk_total": 320,
     "max_loop_iterations": {"implement_test": 5, "review_rework": 3}
   },
 
@@ -606,7 +605,7 @@ Nedělej vlastní formát logů pro agenty. Modeluj to jako OTel spany:
 trace: task tsk_...
  └─ span: agent_run (implementer@5.1)
      ├─ span: context_load        [tokens=112k, cache_hit=true]
-     ├─ span: llm_call            [model, tokens_in/out, cost_czk, latency]
+     ├─ span: llm_call            [model, tokens_in/out, latency]
      ├─ span: tool_call fs.write  [path, bytes]
      ├─ span: tool_call test.run  [exit=1, failed=3]
      ├─ span: llm_call            [oprava]

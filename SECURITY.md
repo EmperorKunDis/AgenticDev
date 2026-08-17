@@ -97,6 +97,6 @@ Radši ti to řekneme, než abys na to přišel sám. K tomuhle vydání:
 - **Není serverová brána před mergem.** Testy běží uvnitř podu, který řídí
   agent. Vhodné pro malý důvěryhodný tým, ne pro cizí přispěvatele.
 - Join tokeny nemají expiraci a jsou sdílené na instanci, ne na osobu.
-- Počítání tokenů je přibližné; útrata v nástěnce je odhad.
+- Modelové subscription jsou osobní; platforma nevede peněžní rozpočty.
 
 Tyhle body jsou vedené jako blokátory verze 1.0.

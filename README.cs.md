@@ -317,12 +317,9 @@ Poctivý stav. Vedeno jako blokátory verze 1.0:
   ke každému běhu a časovou osu úkolu v panelu — viz
   [Co je vidět, když se něco stane](#co-je-vidět-když-se-něco-stane).
 - **Join tokeny nemají expiraci** a jsou na instanci, ne na osobu.
-- **Útrata se neměří a panel to říká.** Ke každému běhu se zapíše model,
-  doba, výsledek a transkript, ale tokeny neohlašuje nikdo — `cost_czk`
-  proto zůstává nulový a panel místo `0 Kč` píše „útrata se neměří", což by
-  se čtlo jako „zdarma". Skutečná čísla potřebují údaje o spotřebě z
-  modelového klienta harnessu. (To `len/3` je rozpočtová brána na velikost
-  kontextu, ne útrata; tabulka `PRICING` neexistuje.)
+- **Každý používá vlastní subscription.** AgenticDev zapisuje model, dobu,
+  výsledek a transkript, ale nevynucuje ani nezobrazuje peněžní rozpočty.
+  Technické ochrany CPU, RAM, času a kontextu zůstávají.
 - **Orchestrační vrstva (directors) neexistuje.** Architektonický rozbor ji
   popisuje, v kódu není. Postup úkolu vynucují kontroly projektu v harnessu
   ([ADR-0003](docs/adr/0003-postup-ukolu-vynucuje-harness.md)).
