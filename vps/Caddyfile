@@ -49,6 +49,15 @@
 		reverse_proxy forgejo:3000
 	}
 
+	# Forgejo Actions checkout currently drops the instance subpath when a
+	# runner is registered against https://host/git/. Permit only Git's smart
+	# HTTP transport at the unprefixed URL used by isolated job containers;
+	# the repository remains private and Forgejo still requires credentials.
+	@runner_git path_regexp runner_git ^/[^/]+/[^/]+/(info/refs|git-upload-pack|git-receive-pack)$
+	handle @runner_git {
+		reverse_proxy forgejo:3000
+	}
+
 	# Nástěnka a instalační skripty
 	handle {
 		reverse_proxy control-plane:8080

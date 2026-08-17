@@ -53,6 +53,20 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('AGENTICDEV_ACCEPTANCE_REQUIRE_COMPLETE',s)
   self.assertIn('exit 3',s)
   self.assertIn('test: live runtime acceptance',s)
+
+ def test_runner_uses_address_reachable_from_isolated_jobs(self):
+  compose=(ROOT/'vps/docker-compose.yml').read_text()
+  caddy=(ROOT/'vps/Caddyfile').read_text()
+  self.assertIn('FORGEJO_INSTANCE: ${FORGEJO_ROOT_URL:?chybi FORGEJO_ROOT_URL}', compose)
+  self.assertNotIn('FORGEJO_INSTANCE: http://forgejo:3000', compose)
+  self.assertIn('@runner_git path_regexp runner_git', caddy)
+  self.assertIn('info/refs|git-upload-pack|git-receive-pack', caddy)
+
+ def test_gate_cli_does_not_reuse_stdin_for_json_and_python_source(self):
+  ctl=(ROOT/'vps/agenticdev-ctl').read_text()
+  self.assertIn('GATE_OUT="$OUT" python3', ctl)
+  self.assertIn('json.loads(os.environ["GATE_OUT"])', ctl)
+  self.assertNotIn("printf '%s' \"$OUT\" | python3 - <<'PY'", ctl)
  def test_protocol_actions_have_exact_schemas(self):
   s=(ROOT/'vps/broker.py').read_text()
   for action in ('start','attach','stop','status','resize','probe'):self.assertIn(f'"{action}":',s)
@@ -81,6 +95,12 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('steps.detect.outputs.kind == \'none\'',s);self.assertIn('exit 1',s)
   self.assertEqual(s.count('max(1, cfg.get_int("MERGE_GATE_APPROVALS", 1))'),2)
   self.assertIn('approvals and approvals >= 1',s)
+  self.assertIn('apt-get install -y -qq python3 python3-pip python3-pytest',s)
+  self.assertIn('python3 -m pytest -q',s)
+  self.assertIn('payload["sha"] = existing.json()["sha"]',s)
+  self.assertIn('httpx.put(url, headers=headers, json=payload',s)
+  self.assertIn('/branch_protections/main",',s)
+  self.assertIn('httpx.delete(',s)
  def test_automatic_enrollment_is_queued_and_collision_safe(self):
   enroll=(ROOT/'control-plane/app/enroll.py').read_text();ctl=(ROOT/'vps/agenticdev-ctl').read_text();install=(ROOT/'install-mac.sh').read_text()
   self.assertIn('_RESERVED =',enroll);self.assertIn('login už patří jinému klíči',enroll)

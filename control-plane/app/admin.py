@@ -345,13 +345,24 @@ jobs:
           echo "Přidej testovací příkaz podporovaný detekcí; prázdná brána nesmí povolit merge."
           exit 1
 
+      - name: Připrav nástroje
+        if: steps.detect.outputs.kind != 'none' && steps.detect.outputs.kind != 'node'
+        run: |
+          set -e
+          apt-get update -qq
+          case "${{ steps.detect.outputs.kind }}" in
+            python) apt-get install -y -qq python3 python3-pip python3-pytest ;;
+            make)   apt-get install -y -qq make ;;
+            go)     apt-get install -y -qq golang-go ;;
+          esac
+
       - name: Testy
         if: steps.detect.outputs.kind != 'none'
         run: |
           set -e
           case "${{ steps.detect.outputs.kind }}" in
             node)   npm ci --no-audit --no-fund || npm install --no-audit --no-fund; npm test ;;
-            python) python -m pip install -q -e . 2>/dev/null || true; python -m pytest -q ;;
+            python) python3 -m pip install -q --break-system-packages -e . 2>/dev/null || true; python3 -m pytest -q ;;
             make)   make test ;;
             go)     go test ./... ;;
           esac
@@ -396,12 +407,16 @@ def _forgejo_migrate(code: str, url: str) -> str | None:
 def _forgejo_put(owner: str, code: str, path: str, content: str, message: str) -> bool:
     import base64 as b64
     try:
-        r = httpx.post(
-            f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/{path}",
-            headers={"Authorization": f"token {FORGEJO_TOKEN}"},
-            json={"content": b64.b64encode(content.encode()).decode(),
-                  "message": message, "branch": "main"},
-            timeout=30)
+        url = f"{FORGEJO_URL}/api/v1/repos/{owner}/{code}/contents/{path}"
+        headers = {"Authorization": f"token {FORGEJO_TOKEN}"}
+        existing = httpx.get(url, headers=headers, params={"ref": "main"}, timeout=30)
+        payload = {"content": b64.b64encode(content.encode()).decode(),
+                   "message": message, "branch": "main"}
+        if existing.status_code == 200:
+            payload["sha"] = existing.json()["sha"]
+            r = httpx.put(url, headers=headers, json=payload, timeout=30)
+        else:
+            r = httpx.post(url, headers=headers, json=payload, timeout=30)
         return r.status_code in (200, 201)
     except Exception:
         return False
@@ -692,6 +707,15 @@ def gate_apply(code: str, op: dict = Depends(operator)):
         raise HTTPException(400, f"z repo_url '{proj['repo_url']}' nepoznám majitele a jméno")
     owner, name = m.group(1), m.group(2)
 
+    # Aktualizace správcovské workflow na main by se jinak správně zastavila
+    # o vlastní branch protection. Gate repair ji odstraní jen pro tento
+    # jeden serverový zápis a níže ji bez ohledu na výsledek znovu nasadí.
+    try:
+        httpx.delete(
+            f"{FORGEJO_URL}/api/v1/repos/{owner}/{name}/branch_protections/main",
+            headers={"Authorization": f"token {FORGEJO_TOKEN}"}, timeout=30)
+    except Exception:
+        pass
     flow = _forgejo_seed_workflow(owner, name)
     # POST na existující ochranu vrací 409, proto ještě PATCH — jinak by
     # změna nastavení neplatila pro projekt, který ochranu už má.
