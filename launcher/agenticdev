@@ -303,6 +303,7 @@ DEC
     # člověku. Stav done nastaví až merge PR (ADR-0006).
     local rel="done"; [[ "$outcome" == "blocked" ]] && rel="blocked"
     [[ "$outcome" == "aborted" ]] && rel="aborted"
+    [[ "$outcome" == "AUTH_REQUIRED" || "$outcome" == "RATE_LIMITED" ]] && rel="retry"
     curl -fsS -X POST "$CONTROL_PLANE/v1/work-orders/$wo_id/release?outcome=$rel" \
       -H "Authorization: Bearer $t" >/dev/null 2>&1 \
       || warn "release work orderu se nepovedl"

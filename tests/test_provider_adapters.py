@@ -15,6 +15,7 @@ analysis=importlib.util.module_from_spec(analysis_spec);analysis_spec.loader.exe
 class ProviderAdapters(unittest.TestCase):
  def test_auth_and_quota_failures_are_recoverable_states(self):
   self.assertEqual(mod.classify_failure("Please login to continue",1),"AUTH_REQUIRED")
+  self.assertEqual(mod.classify_failure("OAuth access token has been revoked",1),"AUTH_REQUIRED")
   self.assertEqual(mod.classify_failure("usage limit reached",1),"RATE_LIMITED")
   self.assertEqual(mod.classify_failure("unexpected",1),"FAILED")
  def test_analysis_cli_is_read_only_and_ignores_project_rules(self):
