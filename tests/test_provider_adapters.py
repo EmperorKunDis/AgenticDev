@@ -58,5 +58,6 @@ class ProviderAdapters(unittest.TestCase):
   launcher=(ROOT/"launcher/agenticdev").read_text()
   self.assertLess(launcher.index('failed)'),launcher.index('Otevírám výsledek analýzy'))
   self.assertIn("Broker rejected workload: $broker_reason",launcher)
+  self.assertIn('return "$outcome_status"',launcher)
 
 if __name__=="__main__":unittest.main()
