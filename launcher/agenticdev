@@ -290,13 +290,14 @@ DEC
   fi
 
   # Výsledek od directora. Co rozhodly kontroly projektu, ne agent.
+  local outcome_status=0
   if [[ -n "${wo_id:-}" ]]; then
     local outcome="aborted"
     [[ -f "$ws/.agenticdev/outcome" ]] && outcome=$(tr -d '\n' < "$ws/.agenticdev/outcome")
     case "$outcome" in
       done|review) ok "postup dojel: $outcome" ;;
-      blocked)     warn "úkol jde do blocked — kontroly po limitu pořád padaly" ;;
-      *)           warn "postup nedojel do konce ($outcome)" ;;
+      blocked)     warn "úkol jde do blocked — kontroly po limitu pořád padaly"; outcome_status=1 ;;
+      *)           warn "postup nedojel do konce ($outcome)"; outcome_status=1 ;;
     esac
     # 'review' i 'done' znamenají pro control plane jedno: práce je na
     # člověku. Stav done nastaví až merge PR (ADR-0006).
@@ -312,6 +313,7 @@ DEC
   # neotevírá PR — nemá k repozitáři přístup a token do Forgeja mu dát
   # nechceme. Doděláme to tady, na hostiteli, kde klíč i token patří.
   finish_task "$ws" "$t"
+  return "$outcome_status"
 }
 
 # Odeslání dokončené větve a založení PR. Hledá vzkaz, který v podu nechal

@@ -182,12 +182,18 @@ def check_scope(p: dict) -> None:
 
     ok = []
     for s in scope:
-        d = WORKSPACE / s.split("/")[0]
-        if not d.exists():
+        rel = s[:-3] if s.endswith("/**") else s
+        target = WORKSPACE / rel
+        if not target.exists():
             continue
-        t = d / ".agenticdev-write-probe"
         try:
-            t.touch(); t.unlink(); ok.append(s)
+            if target.is_dir():
+                probe = target / ".agenticdev-write-probe"
+                probe.touch(); probe.unlink()
+            else:
+                with target.open("ab"):
+                    pass
+            ok.append(s)
         except OSError:
             note(f"{C_WARN}!{C_OFF} {s} mělo být zapisovatelné, ale není")
     note(f"scope {', '.join(scope) if scope else '(nic)'}")

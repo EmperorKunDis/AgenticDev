@@ -114,7 +114,7 @@ class Boundary(unittest.TestCase):
  def test_runtime_hardening_limits_mount_and_proxy(self):
   self.assertTrue(self.call(self.manifest())['ok']); plan=self.plans[0];flat='\n'.join(' '.join(c) for c in plan)
   pod=plan[-1];entry=pod.index('--entrypoint');self.assertEqual(pod[entry:entry+3],['--entrypoint','sleep','agenticdev/pod:installed'])
-  for x in (f'--user {self.uid}:{self.gid}','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HOME=/home/node','HTTP_PROXY=http://egress:8888','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
+  for x in (f'--user {self.uid}:{self.gid}','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HOME=/home/node','HTTP_PROXY=http://egress:8888',f'/home/node:rw,nosuid,size=16m,mode=0700,uid={self.uid},gid={self.gid}','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
   self.assertIn('--network-alias egress',flat)
   for x in ('/srv/agenticdev/config','/etc','/var/run/docker.sock','--privileged','--pid=host','--network=host'): self.assertNotIn(x,flat)
   self.assertNotIn('docker cp',flat);self.assertNotIn('docker exec --user 0',flat)
