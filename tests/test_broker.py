@@ -175,5 +175,7 @@ class Installed(unittest.TestCase):
   for forbidden in ('image','mounts','host_path','command','environment','network','docker_flags'): self.assertNotIn('"'+forbidden+'"',client)
  def test_socket_is_narrow_not_runtime_socket(self):
   service=(ROOT/'vps/agenticdev-broker.service').read_text(); self.assertIn('User=root',service); self.assertIn('Group=agenticdev-broker',service); self.assertNotIn('docker.sock',service)
+  self.assertIn('ProtectHome=false',service)
+  self.assertNotIn('ProtectHome=true',service)
   installer=(ROOT/'install-vps.sh').read_text(); self.assertIn('chmod 0660 /var/run/docker.sock',installer); self.assertIn('chmod 0600 /run/containerd/containerd.sock',installer)
 if __name__=='__main__': unittest.main()
