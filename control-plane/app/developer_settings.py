@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import mimetypes
 import os
 from pathlib import Path
 
@@ -27,14 +28,44 @@ def _encrypt(token: str) -> str:
     return base64.urlsafe_b64encode(nonce + cipher).decode()
 
 
-def _files(root: Path, patterns: tuple[str, ...]) -> list[str]:
-    found: set[str] = set()
+TEXT_PREVIEW_LIMIT = 128 * 1024
+INVENTORY_FILE_LIMIT = 250
+
+
+def _inventory_files(root: Path, patterns: tuple[str, ...], prefix: str = "") -> list[dict]:
+    """Return bounded, text-only repository records without leaking host paths."""
+    found: set[Path] = set()
     if root.is_dir():
         for pattern in patterns:
             for path in root.rglob(pattern):
-                if path.is_file() and ".git" not in path.parts:
-                    found.add(str(path.relative_to(root)))
-    return sorted(found)
+                if path.is_file() and not path.is_symlink() and ".git" not in path.parts:
+                    found.add(path)
+    records = []
+    for path in sorted(found, key=lambda item: str(item.relative_to(root))):
+        if len(records) >= INVENTORY_FILE_LIMIT:
+            break
+        relative = path.relative_to(root).as_posix()
+        display_path = f"{prefix.rstrip('/')}/{relative}" if prefix else relative
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            continue
+        # Do not expose binary artifacts through an administrative text viewer.
+        if b"\0" in raw[:8192]:
+            continue
+        preview = raw[:TEXT_PREVIEW_LIMIT].decode("utf-8", errors="replace")
+        records.append({
+            "name": path.name,
+            "path": display_path,
+            "language": path.suffix.lstrip(".") or "text",
+            "mime_type": mimetypes.guess_type(path.name)[0] or "text/plain",
+            "size_bytes": len(raw),
+            "lines": raw.count(b"\n") + (1 if raw and not raw.endswith(b"\n") else 0),
+            "sha256": hashlib.sha256(raw).hexdigest(),
+            "content": preview,
+            "truncated": len(raw) > TEXT_PREVIEW_LIMIT,
+        })
+    return records
 
 
 @router.get("/v1/developer-settings")
@@ -51,11 +82,17 @@ def developer_settings(op: dict = Depends(operator)):
         "github": {"configured": bool(GITHUB_CLIENT_ID), "identities": identities},
         "inventory": {
             "agents": agents,
-            "skills": _files(WORKSPACE_ROOT, ("SKILL.md",)),
-            "hooks": _files(REPO_ROOT, ("*hook*.py", "*hook*.sh", "*hooks*.py", "*hooks*.sh")),
-            "scripts": _files(WORKSPACE_ROOT / "_base" / "bin", ("*",))
-                       + _files(WORKSPACE_ROOT, ("*.sh", "*.py", "*.ts")),
-            "instructions": _files(WORKSPACE_ROOT, ("AGENTS.md", "scope", "settings.json")),
+            "harness": _inventory_files(
+                REPO_ROOT / "pod" / "harness", ("*.py", "*.sh", "*.json", "*.md"),
+                "pod/harness"),
+            "skills": _inventory_files(WORKSPACE_ROOT, ("SKILL.md",), "workspace"),
+            "hooks": _inventory_files(
+                REPO_ROOT, ("*hook*.py", "*hook*.sh", "*hooks*.py", "*hooks*.sh"),
+                "repo"),
+            "scripts": _inventory_files(
+                WORKSPACE_ROOT, ("*.sh", "*.py", "*.ts"), "workspace"),
+            "instructions": _inventory_files(
+                WORKSPACE_ROOT, ("AGENTS.md", "scope", "settings.json"), "workspace"),
         },
     }
 
