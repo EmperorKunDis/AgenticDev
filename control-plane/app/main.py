@@ -230,7 +230,9 @@ def _recover_reported_start_failures(c, project: str, principal_id: str) -> None
              JOIN assignment a ON a.id=wo.assignment_id
              JOIN task t ON t.id=a.task_id JOIN phase ph ON ph.id=t.phase_id
              JOIN project p ON p.id=ph.project_id
-            WHERE e.verb='broker_failed' AND e.payload->>'reason'='runtime_start_failed'
+            WHERE ((e.verb='broker_start_failed') OR
+                   (e.verb='broker_failed' AND e.payload->>'reason'='runtime_start_failed') OR
+                   (e.verb='broker_reject' AND e.payload->>'reason'='unsafe_scope'))
               AND p.code=%s AND e.actor_id=%s AND a.state='active'""",
         (project, principal_id)).fetchall()
     for row in rows:
@@ -457,7 +459,7 @@ def broker_audit(body: dict, _: None = Depends(_broker)):
                   (body.get("principal_id"), body.get("work_order_id") or "unknown",
                    "broker_" + str(body.get("verb", "reject")), json.dumps(body),
                    f"{body.get('verb')}:{body.get('reason')}:{body.get('ts')}"))
-        if body.get("verb") == "failed" and body.get("reason") == "runtime_start_failed":
+        if body.get("verb") == "start_failed":
             _release_failed_start(c, str(body.get("work_order_id") or ""))
     return {"ok": True}
 

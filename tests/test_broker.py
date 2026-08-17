@@ -55,7 +55,22 @@ class Boundary(unittest.TestCase):
   self.b.runner=lambda plan: (_ for _ in ()).throw(RuntimeError('docker start failed'))
   self.reject(self.manifest(),'runtime_start_failed')
   events=[json.loads(line) for line in self.b.audit_file.read_text().splitlines()]
-  self.assertTrue(any(e['verb']=='failed' and e['reason']=='runtime_start_failed' and e['work_order_id']==WO for e in events))
+  self.assertTrue(any(e['verb']=='start_failed' and e['reason']=='runtime_start_failed' and e['work_order_id']==WO for e in events))
+ def test_scope_paths_allow_globbed_directories_and_exact_files(self):
+  self.assertEqual(mod.scope_path('src/**'),Path('src'))
+  self.assertEqual(mod.scope_path('pyproject.toml'),Path('pyproject.toml'))
+  for unsafe in ('../etc','src/*','/etc','src/[ab]','.git/config'):
+   with self.subTest(scope=unsafe),self.assertRaisesRegex(mod.Reject,'unsafe_scope'):mod.scope_path(unsafe)
+ def test_exact_top_level_file_scope_is_writable(self):
+  original=self.fake_git
+  def repository_with_manifest(cmd):
+   original(cmd)
+   if 'clone' in cmd and '--mirror' not in cmd:(Path(cmd[-1])/'pyproject.toml').write_text('[build-system]\n')
+  self.b.git_runner=repository_with_manifest
+  m=self.manifest();m['repo']['write_scope']=['src/**','tests/**','pyproject.toml'];m['signature']='ed25519:'+base64.b64encode(self.private.sign(mod.canonical(m))).decode()
+  self.assertTrue(self.call(m)['ok'])
+  flat='\n'.join(' '.join(c) for c in self.plans[0])
+  self.assertIn('dst=/workspace/pyproject.toml',flat)
  def test_other_user(self): self.reject(self.manifest(),'wrong_user',user='mallory')
  def test_other_project(self):
   orig=self.authorize

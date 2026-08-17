@@ -81,9 +81,9 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('"STOPPED":set(),"FAILED":set(),"EXPIRED":set()',s)
  def test_runtime_start_failure_requeues_the_assigned_task(self):
   main=(ROOT/'control-plane/app/main.py').read_text()
-  self.assertIn("e.payload->>'reason'='runtime_start_failed'",main)
+  self.assertIn("e.verb='broker_start_failed'",main)
   self.assertIn("UPDATE task SET state='ready'",main)
-  self.assertIn('_release_failed_start(c, str(body.get("work_order_id")',main)
+  self.assertIn('body.get("verb") == "start_failed"',main)
  def test_upgrade_backfills_membership_and_terminates_stale_sessions(self):
   migration=(ROOT/'control-plane/app/migrate.py').read_text();install=(ROOT/'install-vps.sh').read_text();ctl=(ROOT/'vps/agenticdev-ctl').read_text()
   self.assertIn('SELECT p.id,pr.id FROM project p CROSS JOIN principal pr',migration)
