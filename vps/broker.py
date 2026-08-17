@@ -315,7 +315,7 @@ class Broker:
   if m["runtime"]["mode"]=="analysis":
    output=run/"analysis-output";output.mkdir(mode=0o700);os.chown(output,uid,gid)
    pod[-4:-4]=["--mount",f"type=bind,src={output},dst=/analysis-output"]
-  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--user","100:101","--network",net,"--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
+  return [["docker","network","create","--internal",net],["docker","network","create",net+"-outside"],["docker","run","-d","--name",egress,"--user","100:101","--network",net,"--network-alias","egress","--read-only","--security-opt","no-new-privileges","--cap-drop","ALL","--tmpfs","/tmp","--env","AGENTICDEV_EGRESS_ALLOW="+allow,"agenticdev/egress:installed"],["docker","network","connect",net+"-outside",egress],pod]
  def attach_stream(self,wid,token,user,conn):
   w=self._owned(wid,token,user); m=w["manifest"]
   if w["state"]!="RUNNING":raise Reject("workload_not_running")

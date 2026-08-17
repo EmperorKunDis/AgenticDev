@@ -88,6 +88,7 @@ class Boundary(unittest.TestCase):
   self.assertTrue(self.call(self.manifest())['ok']); plan=self.plans[0];flat='\n'.join(' '.join(c) for c in plan)
   pod=plan[-1];entry=pod.index('--entrypoint');self.assertEqual(pod[entry:entry+3],['--entrypoint','sleep','agenticdev/pod:installed'])
   for x in (f'--user {self.uid}:{self.gid}','no-new-privileges','--cap-drop ALL','--pids-limit 256','--cpus 2','--memory 4096m','--storage-opt size=1024M','--internal','HTTP_PROXY=http://egress:8888','dst=/workspace,readonly','dst=/workspace/src'): self.assertIn(x,flat)
+  self.assertIn('--network-alias egress',flat)
   for x in ('/srv/agenticdev/config','/etc','/var/run/docker.sock','--privileged','--pid=host','--network=host'): self.assertNotIn(x,flat)
   self.assertNotIn('docker cp',flat);self.assertNotIn('docker exec --user 0',flat)
  def plan_text(self):
