@@ -4,7 +4,7 @@
 #  Nemá git credentials, nemá přístup k Docker socketu, neběží pod
 #  rootem a ven se dostane jen přes egress-proxy.
 # ═══════════════════════════════════════════════════════════════
-FROM node:22-slim
+FROM node:26-slim
 
 # git je tu kvůli lokálním commitům. Síťové operace (fetch, push) dělá
 # hostitel — pod nikdy nevidí přihlašovací údaje k repozitáři.
