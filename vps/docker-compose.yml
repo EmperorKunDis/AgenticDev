@@ -134,7 +134,10 @@ services:
     command: >-
       sh -c "test -s /data/.runner || forgejo-runner register --no-interactive --instance $${FORGEJO_INSTANCE} --token $${RUNNER_SECRET} --name agenticdev --labels docker:docker://node:20-bookworm; forgejo-runner daemon"
     environment:
-      FORGEJO_INSTANCE: http://forgejo:3000
+      # Job containers run inside the isolated DinD daemon and cannot resolve
+      # Compose service names such as `forgejo`. Register the runner with the
+      # externally routable HTTPS URL so checkout works from both layers.
+      FORGEJO_INSTANCE: ${FORGEJO_ROOT_URL:?chybi FORGEJO_ROOT_URL}
       RUNNER_SECRET: ${RUNNER_SECRET:?chybi RUNNER_SECRET}
       TZ: ${TZ:-Europe/Prague}
       DOCKER_HOST: tcp://runner-docker:2375
