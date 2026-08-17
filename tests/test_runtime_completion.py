@@ -141,6 +141,8 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('/analysis/propose-pr',repo);self.assertIn('explicitní potvrzení',repo)
   analysis=(ROOT/'pod/harness/analysis_runner.py').read_text();broker=(ROOT/'vps/broker.py').read_text()
   self.assertIn('/analysis-output',analysis);self.assertIn('dst=/analysis-output',broker)
+  self.assertIn('_post(policy, "failure"',analysis);self.assertIn("state='failed'",repo)
+  self.assertIn('repository analysis must contain at least one citation',repo)
  def test_forgejo_runner_never_receives_host_docker_socket(self):
   compose=(ROOT/'vps/docker-compose.yml').read_text()
   runner=compose[compose.index('  runner-docker:'):compose.index('  # ─── Artefakty')]
