@@ -130,7 +130,10 @@ cmd_work() {
     command -v claude >/dev/null || die "Claude Code CLI na VPS chybí."
     if ! provider_probe claude; then
       warn "Claude session není použitelná; spouštím přihlášení / Claude session is unusable; starting login"
-      claude auth login </dev/tty >/dev/tty
+      # Explicitně držíme Claude.ai subscription flow. Obecný interaktivní
+      # start může nabídnout Console/API variantu a na vzdáleném stroji
+      # otevřít jiný OAuth tok, než uživatel očekává.
+      claude auth login --claudeai </dev/tty >/dev/tty
       provider_probe claude || die "AUTH_REQUIRED: přihlášení Claude stále není platné / Claude login is still invalid."
     fi
   else

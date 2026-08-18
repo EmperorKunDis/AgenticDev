@@ -33,6 +33,7 @@ class ProviderAdapters(unittest.TestCase):
  def test_remote_codex_login_uses_device_flow(self):
   launcher=(ROOT/"launcher/agenticdev").read_text()
   self.assertIn("codex login --device-auth",launcher)
+  self.assertIn("claude auth login --claudeai",launcher)
   self.assertNotIn("|| codex login\n",launcher)
   self.assertIn("provider_probe claude",launcher);self.assertIn("provider_probe codex",launcher)
   self.assertLess(launcher.index("provider_probe claude"),launcher.index('/v1/provider-profile'))

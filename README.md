@@ -161,6 +161,20 @@ bash agenticdev-install-vps.sh --yes        # non-interactive, reads env vars
 bash agenticdev-install-vps.sh --mac-only   # regenerate the Mac installer only
 ```
 
+An installed VPS can safely check or install an official GitHub release without
+re-entering its configuration:
+
+```bash
+sudo agenticdev-ctl update --check          # download and verify only / pouze ověřit
+sudo agenticdev-ctl update                  # install latest release / nainstalovat latest
+sudo agenticdev-ctl update --tag v0.3.0     # install selected release / konkrétní release
+```
+
+The command uses the bootstrap already shipped with the installed platform. It
+verifies the release checksum and, when `cosign` is installed, its GitHub Actions
+identity before running the installer non-interactively. Existing data, secrets,
+and `.env` configuration remain in place.
+
 When it finishes it prints two links:
 
 | Link | Who | Where it works |

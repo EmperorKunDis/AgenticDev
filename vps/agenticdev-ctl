@@ -34,6 +34,37 @@ api_login() {
     || die "přihlášení k API selhalo — heslo do panelu se možná měnilo v panelu a .env má staré"
 }
 
+# Aktualizuje celou instalaci výhradně z vydaného GitHub Release. Používá
+# bootstrap, který už je součástí nainstalovaného a ověřeného payloadu:
+# ten stáhne release artefakt, ověří SHA256 (a cosign, je-li dostupný) a
+# teprve potom předá instalátoru --yes. Konfigurace a data zůstávají na místě.
+platform_update() {
+  [[ $EUID -eq 0 ]] || die "tohle musí root: sudo agenticdev-ctl update $*"
+  [[ -r "$SRC/install.sh" ]] || die "chybí $SRC/install.sh — instalaci nelze bezpečně aktualizovat"
+
+  local check=0 tag="" arg
+  while [[ $# -gt 0 ]]; do
+    arg=$1; shift
+    case "$arg" in
+      --check) check=1 ;;
+      --tag)
+        [[ $# -gt 0 ]] || die "--tag vyžaduje verzi, například v0.3.0"
+        tag=$1; shift ;;
+      *) die "použití: agenticdev-ctl update [--check] [--tag vX.Y.Z]" ;;
+    esac
+  done
+
+  local bootstrap_args=()
+  [[ -z "$tag" ]] || bootstrap_args+=(--tag "$tag")
+  if (( check )); then
+    printf "\n${B}▸ Kontroluji aktualizaci z GitHub Releases / Checking update${O}\n"
+    bash "$SRC/install.sh" "${bootstrap_args[@]}" --check
+  else
+    printf "\n${B}▸ Aktualizuji z GitHub Releases / Updating from GitHub Releases${O}\n"
+    bash "$SRC/install.sh" "${bootstrap_args[@]}" -- --yes
+  fi
+}
+
 # Zapíše veřejné klíče z registrací do authorized_keys. Bez Tailscale je
 # tohle jediná cesta, jak se člověk na VPS dostane — s Tailscale to jen
 # nikomu neublíží.
@@ -119,6 +150,11 @@ for w in json.load(sys.stdin):
 }
 
 case "${1:-status}" in
+
+  update)
+    shift
+    platform_update "$@"
+    ;;
 
   status)
     printf "\n${B}▸ Služby${O}\n"; dc ps
@@ -417,6 +453,9 @@ PY
     restart [služba]  restart
     logs [služba]     živé logy
     pull              stáhne novější image a restartuje
+    update [--check]  ověří a nainstaluje nejnovější GitHub Release
+                      verify and install the latest GitHub Release
+    update --tag vX.Y.Z   aktualizuje na konkrétní vydání / selected release
 
     user add <login> ["Jméno Příjmení"] [e-mail]
                       založí člověku účet na VPS, klíče a registraci

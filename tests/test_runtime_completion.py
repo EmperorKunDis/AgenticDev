@@ -138,6 +138,15 @@ class RuntimeCompletion(unittest.TestCase):
   self.assertIn('from providers import command',harness);self.assertNotIn('shutil.which("pi")',harness)
   self.assertIn('provider_denied',broker);self.assertIn('/home/node/.claude',broker);self.assertIn('/home/node/.codex',broker)
   self.assertIn('provider_probe claude',launcher);self.assertIn('provider_probe codex',launcher)
+ def test_installed_vps_can_verify_and_apply_official_release_updates(self):
+  ctl=(ROOT/'vps/agenticdev-ctl').read_text();launcher=(ROOT/'launcher/agenticdev').read_text()
+  self.assertIn('platform_update()',ctl)
+  self.assertIn('bash "$SRC/install.sh" "${bootstrap_args[@]}" --check',ctl)
+  self.assertIn('bash "$SRC/install.sh" "${bootstrap_args[@]}" -- --yes',ctl)
+  self.assertIn('update --tag vX.Y.Z',ctl)
+  self.assertNotIn('raw.githubusercontent.com',ctl)
+  self.assertIn('claude auth login --claudeai',launcher)
+  self.assertIn('codex login --device-auth',launcher)
  def test_repository_analysis_is_versioned_cited_and_gates_work_orders(self):
   migrate=(ROOT/'control-plane/app/migrate.py').read_text();repo=(ROOT/'control-plane/app/repository.py').read_text();main=(ROOT/'control-plane/app/main.py').read_text()
   self.assertIn('CREATE TABLE IF NOT EXISTS provider_profile',migrate)
