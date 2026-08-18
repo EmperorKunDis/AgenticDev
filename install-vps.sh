@@ -57,6 +57,78 @@ if (( ! MODE_CHECK && ! MODE_YES )) && ! { true </dev/tty; } 2>/dev/null; then
    Nebo běž neinteraktivně:  bash $SELF --yes  (hodnoty vezme z prostředí/.env)"
 fi
 
+# Jazyk instalace je součástí konfigurace instance. U upgradu se převezme,
+# u automatické instalace ho lze nastavit AGENTICDEV_LANG=cs|en a u nové
+# interaktivní instalace je to úplně první volba.
+AGENTICDEV_LANG="${AGENTICDEV_LANG:-}"
+if [[ -z "$AGENTICDEV_LANG" && -r "$ENVF" ]]; then
+  AGENTICDEV_LANG=$(sed -n 's/^AGENTICDEV_LANG=//p' "$ENVF" | tail -1)
+fi
+if [[ -z "$AGENTICDEV_LANG" && ! $MODE_CHECK -eq 1 && ! $MODE_YES -eq 1 ]]; then
+  printf "\n  Choose language / Vyber jazyk\n\n  1) Čeština\n  2) English\n\n"
+  read -rp "  číslo / number (Enter = 1): " LANG_PICK </dev/tty
+  [[ "${LANG_PICK:-1}" == 2 ]] && AGENTICDEV_LANG=en || AGENTICDEV_LANG=cs
+fi
+AGENTICDEV_LANG="${AGENTICDEV_LANG:-cs}"
+[[ "$AGENTICDEV_LANG" == cs || "$AGENTICDEV_LANG" == en ]] \
+  || die "AGENTICDEV_LANG musí být cs nebo en / must be cs or en"
+
+say() { # say "česky" "English"
+  [[ "$AGENTICDEV_LANG" == en ]] && printf '%s\n' "$2" || printf '%s\n' "$1"
+}
+pick() { # pick "česky" "English"
+  [[ "$AGENTICDEV_LANG" == en ]] && printf '%s' "$2" || printf '%s' "$1"
+}
+
+installation_tutorial() {
+  [[ -e "$ENVF" || $MODE_CHECK -eq 1 || $MODE_YES -eq 1 ]] && return
+  echo
+  if [[ "$AGENTICDEV_LANG" == en ]]; then
+    cat <<'TUTORIAL'
+  Welcome. This wizard will install the complete AgenticDev platform.
+
+  What will happen:
+    1. Check the host and install Docker, Claude Code and Codex.
+    2. Choose private Tailscale access or your own public domain.
+    3. Create the administrator, Git service and encrypted platform secrets.
+    4. Start isolated agent workloads, backups and the administration panel.
+
+  You will need:
+    • a clean supported Debian/Ubuntu VPS and root access;
+    • optionally a domain, or a Tailscale account for the private mode;
+    • two new passwords: ADMIN for you and JOIN for team enrollment.
+
+  Model subscriptions are personal. The installer never asks for Claude or
+  ChatGPT credentials. Each user signs in to Claude Code or Codex under their
+  own Linux account when they first select that provider.
+
+  Existing installations keep their data and secrets. Press Enter to continue.
+TUTORIAL
+  else
+    cat <<'TUTORIAL'
+  Vítej. Tento průvodce nainstaluje kompletní platformu AgenticDev.
+
+  Co proběhne:
+    1. Kontrola serveru a instalace Dockeru, Claude Code a Codexu.
+    2. Volba soukromého přístupu přes Tailscale nebo vlastní veřejné domény.
+    3. Vytvoření správce, Git služby a šifrovaných tajemství platformy.
+    4. Spuštění izolovaných agentních běhů, záloh a administračního panelu.
+
+  Připrav si:
+    • čistý podporovaný Debian/Ubuntu VPS a root přístup;
+    • volitelně doménu, nebo Tailscale účet pro soukromý režim;
+    • dvě nová hesla: ADMIN pro tebe a JOIN pro registraci týmu.
+
+  Modelová předplatná jsou osobní. Instalátor nikdy nechce přihlašovací údaje
+  ke Claude ani ChatGPT. Každý uživatel se přihlásí do Claude Code nebo Codexu
+  pod vlastním linuxovým účtem při prvním výběru providera.
+
+  Existující instalace zachovávají data i tajemství. Pokračuj Enterem.
+TUTORIAL
+  fi
+  read -r </dev/tty
+}
+
 ask() {  # ask <proměnná> <otázka> <default>
   local __v=$1 __q=$2 __d=${3:-} __r
   if (( MODE_YES )); then printf -v "$__v" '%s' "${!__v:-$__d}"; return; fi
@@ -77,14 +149,14 @@ askpw() { # askpw <proměnná> <otázka> <min-délka>
     return
   fi
   while :; do
-    read -rsp "  $__q (doporučeno min $__min znaků): " __a </dev/tty; echo
+    read -rsp "  $__q ($(pick 'doporučeno min' 'recommended min') $__min $(pick 'znaků' 'characters')): " __a </dev/tty; echo
     if [[ ${#__a} -lt $__min ]]; then
-      read -rp "${YLW}    kratší, než se doporučuje — trvat na tom? [a/N] ${OFF}" __ok </dev/tty
+      read -rp "${YLW}    $(pick 'kratší, než se doporučuje — trvat na tom? [a/N]' 'shorter than recommended — keep it? [y/N]') ${OFF}" __ok </dev/tty
       [[ "$__ok" =~ ^[aAyY]$ ]] || continue
     fi
-    read -rsp "  ještě jednou: " __b </dev/tty; echo
+    read -rsp "  $(pick 'ještě jednou' 'repeat password'): " __b </dev/tty; echo
     [[ "$__a" == "$__b" ]] && break
-    printf "${YLW}    nesouhlasí — zkus znovu${OFF}\n"
+    printf "${YLW}    %s${OFF}\n" "$(pick 'nesouhlasí — zkus znovu' 'passwords do not match — try again')"
   done
   printf -v "$__v" '%s' "$__a"
 }
@@ -95,7 +167,7 @@ run() {  # run "popis" cmd...
   ( "$@" >>"$LOG" 2>&1 ) & local pid=$!
   while kill -0 "$pid" 2>/dev/null; do printf "."; sleep 2; done
   if wait "$pid"; then printf " ${GRN}✓${OFF}\n"
-  else printf " ${RED}✗${OFF}\n"; echo; tail -n 30 "$LOG"; die "$msg selhalo. Celý log: $LOG"; fi
+  else printf " ${RED}✗${OFF}\n"; echo; tail -n 30 "$LOG"; die "$msg $(pick 'selhalo. Celý log:' 'failed. Full log:') $LOG"; fi
 }
 
 clear 2>/dev/null || true
@@ -105,6 +177,7 @@ cat <<'BANNER'
   │   instalace VPS                                  │
   └──────────────────────────────────────────────────┘
 BANNER
+installation_tutorial
 
 # ═══════════════════════════════════════════════════════════════════════
 #  0. Rozbalení vloženého repozitáře
@@ -190,11 +263,11 @@ if [[ -f $ENVF ]]; then
   ADMIN_USER="${FORGEJO_ADMIN_USER:-agentic-admin}"
   info "tajemství zůstávají, měnit je nebudu"
 else
-  step "Nastavení — pár otázek, pak už nic"
+  step "$(pick 'Nastavení — pár otázek, pak už nic' 'Setup — a few questions, then the installer takes over')"
   echo
-  info "Doménu nech prázdnou, jestli VPS nemá veřejné DNS."
-  info "Platforma pak pojede jen po tailnetu."
-  ask DOMAIN "Doména platformy (Enter = jen tailnet)" ""
+  info "$(pick 'Doménu nech prázdnou, jestli VPS nemá veřejné DNS.' 'Leave the domain empty if the VPS has no public DNS.')"
+  info "$(pick 'Platforma pak pojede jen po tailnetu.' 'The platform will then be available only inside the tailnet.')"
+  ask DOMAIN "$(pick 'Doména platformy (Enter = jen tailnet)' 'Platform domain (Enter = tailnet only)')" ""
   if [[ "$DOMAIN" =~ ^([0-9]{1,3}\.){3}[0-9]{1,3}$ ]]; then
     # Let's Encrypt nevydá certifikát na holou IP adresu, ať už do compose
     # napíšeš cokoli — CA k tomu potřebuje jméno. sslip.io je veřejná DNS
@@ -208,28 +281,28 @@ else
   # Kdo instaluje, se musí podepsat. Není to formalita: z tohohle jména
   # vzniká `principal`, a bez něj má auditní stopa u všeho, co se odklikne
   # v panelu, prázdného aktéra — tedy nevíš, kdo co schválil.
-  ask ADMIN_NAME "Tvoje jméno a příjmení (správce instance)" ""
-  [[ -n "$ADMIN_NAME" ]] || die "jméno je povinné — bez něj nebude v auditní stopě vidět, kdo instanci spravuje"
-  [[ "$ADMIN_NAME" == *" "* ]] || warn "jen jedno slovo? V auditní stopě to bude takhle."
-  ask ADMIN_EMAIL "Tvůj e-mail (správce instance)" ""
-  [[ -n "$ADMIN_EMAIL" ]] || die "e-mail je povinný — Forgejo bez něj admina nezaloží"
+  ask ADMIN_NAME "$(pick 'Tvoje jméno a příjmení (správce instance)' 'Your full name (instance administrator)')" ""
+  [[ -n "$ADMIN_NAME" ]] || die "$(pick 'jméno je povinné — audit musí znát správce' 'name is required — the audit trail must identify the administrator')"
+  [[ "$ADMIN_NAME" == *" "* ]] || warn "$(pick 'jen jedno slovo? V auditní stopě to bude takhle.' 'Only one word? It will appear that way in the audit trail.')"
+  ask ADMIN_EMAIL "$(pick 'Tvůj e-mail (správce instance)' 'Your email (instance administrator)')" ""
+  [[ -n "$ADMIN_EMAIL" ]] || die "$(pick 'e-mail je povinný — Forgejo bez něj admina nezaloží' 'email is required — Forgejo cannot create the administrator without it')"
   # Forgejo 11 reserves the literal username "admin" and rejects bootstrap.
-  ask ADMIN_USER "Přihlašovací jméno do gitu" "agentic-admin"
+  ask ADMIN_USER "$(pick 'Přihlašovací jméno do gitu' 'Git login name')" "agentic-admin"
 
   echo
-  info "Dvě hesla. Vymysli si je teď, jinam se zapisovat nebudou."
-  info "  ADMIN  — přihlášení do admin panelu (jen ty)"
-  info "  JOIN   — dostane každý, kdo si má připojit stroj"
-  askpw ADMIN_PW  "Heslo do admin panelu" 12
-  askpw ENROLL_PW "Heslo pro připojení strojů" 10
+  info "$(pick 'Dvě hesla. Vymysli si je teď, jinam se zapisovat nebudou.' 'Choose two passwords now; they are not sent anywhere else.')"
+  info "$(pick '  ADMIN  — přihlášení do admin panelu (jen ty)' '  ADMIN  — administration panel login (only you)')"
+  info "$(pick '  JOIN   — dostane každý, kdo si má připojit stroj' '  JOIN   — shared with people enrolling a workstation')"
+  askpw ADMIN_PW  "$(pick 'Heslo do admin panelu' 'Administration panel password')" 12
+  askpw ENROLL_PW "$(pick 'Heslo pro připojení strojů' 'Workstation enrollment password')" 10
 
   # Subscription credentials se nikdy neptá root instalátor ani panel.
   # Každý uživatel se přihlásí nativním CLI pod vlastním UID.
 
-  ask SMTP_HOST "SMTP host (Enter = přeskočit maily)" ""
+  ask SMTP_HOST "$(pick 'SMTP host (Enter = přeskočit maily)' 'SMTP host (Enter = skip email)')" ""
   if [[ -n "${SMTP_HOST:-}" ]]; then
-    ask  SMTP_USER "SMTP uživatel" ""
-    asks SMTP_PASS "SMTP heslo"
+    ask  SMTP_USER "$(pick 'SMTP uživatel' 'SMTP user')" ""
+    asks SMTP_PASS "$(pick 'SMTP heslo' 'SMTP password')"
   fi
 fi
 
@@ -282,7 +355,7 @@ bash "$STAGE/tools/runtime-host-check.sh" >>"$LOG" 2>&1 \
 #  Kdo tuhle platformu rozdává dál (jiná firma, jiný ajťák, jiný VPS),
 #  chce `domain` — jinak musí každý zákazník zřídit Tailscale účet.
 # ═══════════════════════════════════════════════════════════════════════
-step "Připojení"
+step "$(pick 'Připojení' 'Access mode')"
 CONNECT="${AGENTICDEV_CONNECT:-}"
 if [[ -z "$CONNECT" ]]; then
   if (( MODE_YES )); then
@@ -290,12 +363,12 @@ if [[ -z "$CONNECT" ]]; then
     CONNECT=$([[ -n "${DOMAIN:-}" ]] && echo domain || echo tailscale)
   else
     echo
-    info "  1) Tailscale  — nic z toho není z internetu vidět, kromě registrace."
-    info "                  Potřebuje Tailscale účet pro tuhle instanci."
-    info "  2) Doména     — bez třetí strany, TLS z Let's Encrypt."
-    info "                  Z internetu je vidět i panel, chráněný heslem."
-    [[ -n "${DOMAIN:-}" ]] || info "  ${DIM}Doménu jsi nezadal, takže 2) nejde vybrat.${OFF}"
-    ask CONNECT_N "Volba" "$([[ -n "${DOMAIN:-}" ]] && echo 2 || echo 1)"
+    info "$(pick '  1) Tailscale  — z internetu je vidět jen registrace.' '  1) Tailscale  — only enrollment is visible from the internet.')"
+    info "$(pick '                  Potřebuje Tailscale účet pro tuhle instanci.' '                  Requires a Tailscale account for this instance.')"
+    info "$(pick "  2) Doména     — bez třetí strany, TLS z Let's Encrypt." "  2) Domain     — no access-network provider, Let's Encrypt TLS.")"
+    info "$(pick '                  Z internetu je vidět i panel, chráněný heslem.' '                  The password-protected panel is internet-visible.')"
+    [[ -n "${DOMAIN:-}" ]] || info "$(pick '  Doména nebyla zadaná, takže 2) nejde vybrat.' '  No domain was provided, so option 2 is unavailable.')"
+    ask CONNECT_N "$(pick 'Volba' 'Choice')" "$([[ -n "${DOMAIN:-}" ]] && echo 2 || echo 1)"
     CONNECT=$([[ "$CONNECT_N" == "2" ]] && echo domain || echo tailscale)
   fi
 fi
@@ -469,6 +542,7 @@ if (( FRESH )); then
 #  bez něj neověříš dřív vydané work ordery.
 # ═══════════════════════════════════════════════════════════════
 AGENTICDEV_INSTANCE_ID=$INSTANCE_ID
+AGENTICDEV_LANG=$AGENTICDEV_LANG
 AGENTICDEV_MODE=$AGENTICDEV_MODE
 AGENTICDEV_DOMAIN='$(envq "$DOMAIN")'
 CONTROL_PLANE_URL='$(envq "$CP_URL")'
@@ -554,6 +628,7 @@ else
   add() { grep -q "^$1=" $ENVF || echo "$1=$2" >>$ENVF; }
   add AGENTICDEV_INSTANCE_ID "$(cat /proc/sys/kernel/random/uuid)"
   add AGENTICDEV_MODE        "$([[ -n "${AGENTICDEV_DOMAIN:-}" ]] && echo public || echo tailnet)"
+  add AGENTICDEV_LANG        "$AGENTICDEV_LANG"
   add LEASE_HOURS       4
   add ENROLL_PASSWORD   "$(openssl rand -base64 24 | tr -d '/+=' | cut -c1-20)"
   add TS_AUTHKEY        ""
@@ -915,12 +990,47 @@ fi
 CP="${CONTROL_PLANE_URL:-http://$VPS_HOST:8080}"
 if [[ "$CONNECT" == "domain" ]]; then
   PANEL_URL="https://$DOMAIN/"
-  PANEL_NOTE="funguje z jakéhokoli prohlížeče — chrání ho jen tvoje heslo"
+  PANEL_NOTE="$(pick 'funguje z jakéhokoli prohlížeče — chrání ho tvoje heslo' 'works in any browser — protected by your password')"
 else
   PANEL_URL="$CP"
-  PANEL_NOTE="jen z tailnetu; nejdřív si připoj stroj odkazem pro tým"
+  PANEL_NOTE="$(pick 'jen z tailnetu; nejdřív si připoj stroj odkazem pro tým' 'tailnet only; enroll your workstation first')"
 fi
-cat <<EOF
+if [[ "$AGENTICDEV_LANG" == en ]]; then
+  cat <<EOF
+
+  ${GRN}╔═══════════════════════════════════════════════════════╗
+  ║   DONE. The platform is running.                      ║
+  ╚═══════════════════════════════════════════════════════╝${OFF}
+
+  ${BLU}1) ADMIN PANEL${OFF} — $PANEL_NOTE
+     ${YLW}$PANEL_URL${OFF}
+     administrator: $ADMIN_NAME <$ADMIN_EMAIL>
+     password: ${YLW}the ADMIN password you entered${OFF}
+
+  ${BLU}2) TEAM ENROLLMENT LINK${OFF} — send it to anyone joining the instance
+     ${YLW}${JOIN_URL:-(not available; see the warning above)}${OFF}
+
+     They enter the JOIN password and follow the page. It supports macOS,
+     Linux and Windows. Send the public link and private password separately.
+
+  ${BLU}3) PERSONAL MODEL LOGIN${OFF}
+     Each person runs ${YLW}agenticdev${OFF}, selects Claude Code or Codex and
+     signs in with their own Claude/ChatGPT subscription. Credentials stay in
+     that person's Linux home and are never stored in the administration panel.
+
+  ${BLU}4) GIT${OFF}
+     ${FORGEJO_ROOT_URL:-http://$VPS_HOST:3000/}
+     $FORGEJO_ADMIN_USER / ${YLW}$FORGEJO_ADMIN_PASSWORD${OFF}
+
+  ${YLW}Back up outside this server:${OFF}
+     $ENVF        ${DIM}(especially WO_SIGNING_KEY_B64)${OFF}
+
+  ${DIM}Show this again:  agenticdev-info
+  Operations:       agenticdev-ctl status | update --check | logs | backup-now${OFF}
+
+EOF
+else
+  cat <<EOF
 
   ${GRN}╔═══════════════════════════════════════════════════════╗
   ║   HOTOVO. Platforma běží.                             ║
@@ -939,7 +1049,12 @@ cat <<EOF
 
      Odkaz je veřejný, heslo ne. Posílej je zvlášť.
 
-  ${BLU}3) GIT${OFF}
+  ${BLU}3) OSOBNÍ PŘIHLÁŠENÍ K MODELŮM${OFF}
+     Každý spustí ${YLW}agenticdev${OFF}, vybere Claude Code nebo Codex a přihlásí
+     vlastní Claude/ChatGPT subscription. Údaje zůstávají v jeho linuxovém
+     domově a nikdy se neukládají do administračního panelu.
+
+  ${BLU}4) GIT${OFF}
      ${FORGEJO_ROOT_URL:-http://$VPS_HOST:3000/}
      $FORGEJO_ADMIN_USER / ${YLW}$FORGEJO_ADMIN_PASSWORD${OFF}
 
@@ -947,9 +1062,10 @@ cat <<EOF
      $ENVF        ${DIM}(hlavně WO_SIGNING_KEY_B64)${OFF}
 
   ${DIM}Tenhle výpis znovu:  agenticdev-info
-  Obsluha:             agenticdev-ctl status | logs | mac | backup-now${OFF}
+  Obsluha:             agenticdev-ctl status | update --check | logs | backup-now${OFF}
 
 EOF
+fi
 info "subscription credentials zůstávají v osobním ~/.claude nebo ~/.codex"
 [[ "$AGENTICDEV_MODE" == "tailnet" ]] && \
   info "Bez domény jede platforma jen po tailnetu. Doménu doplníš do $ENVF (AGENTICDEV_DOMAIN, AGENTICDEV_MODE=public) a pustíš 'agenticdev-ctl up'."
